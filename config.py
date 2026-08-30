@@ -3,6 +3,8 @@ import os
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 
+GUILD_ID = os.getenv("GUILD_ID")
+
 ACHIEVEMENT_ROLE_IDS = [
     1543500048245981275,
     1543500112456585267,
