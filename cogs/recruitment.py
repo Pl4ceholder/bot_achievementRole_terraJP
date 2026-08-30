@@ -113,7 +113,7 @@ class RecruitModal(discord.ui.Modal, title="募集詳細の入力"):
         # 7. 募集主をスレッドに参加させ、スレッド内でメンションを飛ばす
         await thread.add_user(interaction.user)
         await thread.send(
-            f"{interaction.user.mention} 募集スレッドが作成されました！参加希望や質問はこちらのチャットで行ってください。"
+            f"募集スレッドが作成されました！参加希望や質問はこちらのチャットで行ってください。"
         )
 
         # 8. 完了通知の送信と選択フォーム（ドロップダウン画面）の削除 ★追加部分
