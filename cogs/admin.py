@@ -27,21 +27,28 @@ class AdminCog(commands.Cog):
                     )
         return choices[:25]
 
-    # 入力された文字列（IDまたはロール名）からロールオブジェクトを特定するヘルパー関数
+    # 型判定に対応したロール特定用関数
     def _find_achievement_role(
-        self, guild: discord.Guild, input_val: str
+        self, guild: discord.Guild, input_val: discord.Role | str
     ) -> discord.Role | None:
-        # 1. 数字（ID）として渡された場合
-        if input_val.isdigit():
+        # 1. すでに Role オブジェクトとして渡された場合
+        if isinstance(input_val, discord.Role):
+            if input_val.id in ACHIEVEMENT_ROLE_IDS:
+                return input_val
+            return None
+
+        # 2. 数字文字列（ロールID）として渡された場合
+        if isinstance(input_val, str) and input_val.isdigit():
             role_id = int(input_val)
             if role_id in ACHIEVEMENT_ROLE_IDS:
                 return guild.get_role(role_id)
 
-        # 2. ロール名として直接渡された場合
-        for role_id in ACHIEVEMENT_ROLE_IDS:
-            role = guild.get_role(role_id)
-            if role and role.name == input_val:
-                return role
+        # 3. ロール名（文字列）として手入力された場合
+        if isinstance(input_val, str):
+            for role_id in ACHIEVEMENT_ROLE_IDS:
+                role = guild.get_role(role_id)
+                if role and role.name == input_val:
+                    return role
 
         return None
 
@@ -102,7 +109,7 @@ class AdminCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         member: discord.Member,
-        role: str,
+        role: str,  # トランスフォーム対応のため型は受容
     ):
         target_role = self._find_achievement_role(interaction.guild, role)
 
@@ -132,7 +139,7 @@ class AdminCog(commands.Cog):
         self,
         interaction: discord.Interaction,
         member: discord.Member,
-        role: str,
+        role: str,  # トランスフォーム対応のため型は受容
     ):
         target_role = self._find_achievement_role(interaction.guild, role)
 
