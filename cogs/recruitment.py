@@ -68,14 +68,14 @@ class RecruitModal(discord.ui.Modal, title="募集詳細の入力"):
 
         mention_str = " ".join(mentions)
 
-        # ★ 3. VC名の決定とメンション化の処理
+        # 3. VC名の決定とメンション化の処理
         vc_key = f"{vc_prefix}{self.vc}"
         vc_channel_id = VC_CHANNEL_IDS.get(vc_key)
         
         if vc_channel_id:
-            vc_display = f"<#{vc_channel_id}>"  # チャンネルへのリンク（メンション）
+            vc_display = f"<#{vc_channel_id}>"
         else:
-            vc_display = vc_key  # IDが登録されていない場合は文字として表示
+            vc_display = vc_key
 
         # 4. Embed（埋め込みメッセージ）の生成
         embed = discord.Embed(
@@ -88,7 +88,7 @@ class RecruitModal(discord.ui.Modal, title="募集詳細の入力"):
         )
         embed.add_field(name="🎮 種類", value=self.mode, inline=True)
         embed.add_field(name="💻 機種", value=self.platform, inline=True)
-        embed.add_field(name="🔊 VC", value=vc_display, inline=True)  # ここを更新
+        embed.add_field(name="🔊 VC", value=vc_display, inline=True)
 
         conn_val = (
             self.connection_info.value if self.connection_info.value else "なし"
@@ -116,10 +116,17 @@ class RecruitModal(discord.ui.Modal, title="募集詳細の入力"):
             f"{interaction.user.mention} 募集スレッドが作成されました！参加希望や質問はこちらのチャットで行ってください。"
         )
 
+        # 8. 完了通知の送信と選択フォーム（ドロップダウン画面）の削除 ★追加部分
         await interaction.followup.send(
             f"✅ {target_channel.mention} に募集を投稿し、スレッドを作成しました！",
             ephemeral=True,
         )
+        
+        # ドロップダウンがあった元のメッセージ（フォーム画面）を削除
+        try:
+            await interaction.delete_original_response()
+        except Exception:
+            pass
 
 
 # ステップ1：ドロップダウン選択メニュー
