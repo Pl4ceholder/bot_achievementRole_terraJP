@@ -45,17 +45,27 @@ async def setup_hook():
 
 @bot.event
 async def on_ready():
-    # 1. グローバルに残っている古いコマンドを全消去
-    bot.tree.clear_commands(guild=None)
-    await bot.tree.sync()
-    print("グローバルコマンドをすべてクリアしました！")
-
-    # 2. Guild ID が指定されている場合は Guild 側へ正しく再同期
     if GUILD_ID:
-        guild_obj = discord.Object(id=int(GUILD_ID))
-        bot.tree.copy_global_to(guild=guild_obj)
-        synced = await bot.tree.sync(guild=guild_obj)
-        print(f"[{len(synced)}] 件のコマンドを Guild に再同期しました！")
+        try:
+            guild_obj = discord.Object(id=int(GUILD_ID))
+
+            # 1. Guild側の古いコマンドを一度クリア
+            bot.tree.clear_commands(guild=guild_obj)
+
+            # 2. グローバルの定義をGuildへコピーして同期
+            bot.tree.copy_global_to(guild=guild_obj)
+            synced = await bot.tree.sync(guild=guild_obj)
+
+            # 3. グローバル側の登録を空にしてクリア（重複防止）
+            bot.tree.clear_commands(guild=None)
+            await bot.tree.sync()
+
+            print(f"[{len(synced)}] 件のコマンドを Guild に正常同期しました！")
+        except Exception as e:
+            print(f"同期エラー: {e}")
+    else:
+        synced = await bot.tree.sync()
+        print(f"[{len(synced)}] 件のコマンドをグローバル同期しました！")
 
     print(f"Logged in as {bot.user}")
 
