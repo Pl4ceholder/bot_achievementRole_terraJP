@@ -47,6 +47,14 @@ async def setup_hook():
 
 @bot.event
 async def on_ready():
+    # サーバー指定でコマンドを即時登録・同期
+    guild = discord.Object(id=GUILD_ID)
+    bot.tree.copy_global_to(guild=guild)
+    synced = await bot.tree.sync(guild=guild)
+
+    print(f"[{len(synced)}] 件のスラッシュコマンドを即時同期しました！")
+    print(f"Logged in as {bot.user}")
+
     # スラッシュコマンドを同期
     try:
         synced = await bot.tree.sync()
