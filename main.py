@@ -80,14 +80,17 @@ class TitleSelect(discord.ui.Select):
         user = interaction.user
         selected_value = self.values[0]
 
-        # 1. 現在ついているすべての実績系ロールを解除
+        # 1. ドロップダウンが表示されている元のメッセージ（選択ボックス）を削除
+        await interaction.delete_original_response()
+
+        # 2. 現在ついているすべての実績系ロールを解除
         roles_to_remove = [
             role for role in user.roles if role.id in ACHIEVEMENT_ROLE_IDS
         ]
         if roles_to_remove:
             await user.remove_roles(*roles_to_remove)
 
-        # 2. 選択されたロールを1つだけ付与
+        # 3. 選択されたロールを1つだけ付与
         if selected_value != "none":
             selected_role = interaction.guild.get_role(int(selected_value))
             if selected_role:
@@ -105,10 +108,10 @@ class TitleSelect(discord.ui.Select):
                 "称号を外しました。", ephemeral=True
             )
 
-        # 3. 最初に表示された「ドロップダウンメニュー選択欄」を削除して消す
+        # 4. 最初に表示された「ドロップダウンメニュー選択欄」を削除して消す
         await interaction.delete_original_response()
 
-        # 4. 「称号を変更しました！」の通知メッセージも3秒後に自動削除する
+        # 5. 「称号を変更しました！」の通知メッセージも3秒後に自動削除する
         await msg.delete(delay=5)
 
 class TitleSelectView(discord.ui.View):
