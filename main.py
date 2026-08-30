@@ -2,6 +2,28 @@ import os
 import redis
 import discord
 from discord.ext import commands
+from threading import Thread
+from flask import Flask
+
+# Renderのポート検知を通すための軽量Flaskアプリ
+app = Flask("")
+
+@app.route("/")
+def home():
+    return "Bot is alive!"
+
+def run_http():
+    # Renderが割り当てるPORT番号（デフォルト10000）で起動
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+
+# スレッドでHTTPサーバーを並行起動
+Thread(target=run_http).start()
+
+# --- 以降、既存のdiscord.pyの処理 ---
+
+
 
 # 1. 環境変数からRedis接続情報を取得（RenderのEnvironmentで設定）
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
