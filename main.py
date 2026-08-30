@@ -9,7 +9,7 @@ r = redis.from_url(REDIS_URL, decode_responses=True)
 
 # 監視対象の実績ロールIDリスト（DiscordのロールID）
 ACHIEVEMENT_ROLE_IDS = [
-    1543500048245981275:,  # 実績AロールID
+    1543500048245981275,  # 実績AロールID
     1543500112456585267,  # 実績BロールID
     1543500149798473828,  # 実績CロールID
 ]
