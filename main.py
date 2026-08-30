@@ -1,19 +1,20 @@
 import os
-import redis
+from threading import Thread
 import discord
 from discord.ext import commands
-from threading import Thread
 from flask import Flask
+import redis
 
 # Renderのポート検知を通すための軽量Flaskアプリ
 app = Flask("")
+
 
 @app.route("/")
 def home():
     return "Bot is alive!"
 
+
 def run_http():
-    # Renderが割り当てるPORT番号（デフォルト10000）で起動
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
@@ -23,13 +24,11 @@ Thread(target=run_http).start()
 
 # --- 以降、既存のdiscord.pyの処理 ---
 
-
-
-# 1. 環境変数からRedis接続情報を取得（RenderのEnvironmentで設定）
+# 1. 環境変数からRedis接続情報を取得
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
-# 監視対象の実績ロールIDリスト（DiscordのロールID）
+# 監視対象の実績ロールIDリスト
 ACHIEVEMENT_ROLE_IDS = [
     1543500048245981275,  # 実績AロールID
     1543500112456585267,  # 実績BロールID
@@ -41,6 +40,7 @@ intents.members = True
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+
 # --------------------------------------------------
 # DB操作用関数
 # --------------------------------------------------
@@ -49,9 +49,15 @@ def get_user_achievements(user_id: int) -> list[int]:
     role_ids = r.smembers(f"user:{user_id}:achievements")
     return [int(rid) for rid in role_ids]
 
+
 def grant_achievement(user_id: int, role_id: int):
-    """ユーザーに実績を解放（管理者が手動付与した際などに実行）"""
+    """ユーザーに実績を解放"""
     r.sadd(f"user:{user_id}:achievements", role_id)
+
+
+def revoke_achievement(user_id: int, role_id: int):
+    """ユーザーの実績を剥奪（DBから削除）"""
+    r.srem(f"user:{user_id}:achievements", role_id)
 
 
 # --------------------------------------------------
@@ -80,7 +86,7 @@ class TitleSelect(discord.ui.Select):
         user = interaction.user
         selected_value = self.values[0]
 
-        # 1. ドロップダウンが表示されている元のメッセージ（選択ボックス）を削除
+        # 1. 選択ボックスのある元のメッセージを削除
         await interaction.delete_original_response()
 
         # 2. 現在ついているすべての実績系ロールを解除
@@ -95,49 +101,42 @@ class TitleSelect(discord.ui.Select):
             selected_role = interaction.guild.get_role(int(selected_value))
             if selected_role:
                 await user.add_roles(selected_role)
-                msg = await interaction.followup.send(
+                await interaction.followup.send(
                     f"称号を **{selected_role.name}** に変更しました！",
                     ephemeral=True,
                 )
-            else:
-                msg = await interaction.followup.send(
-                    "指定されたロールが見つかりませんでした。", ephemeral=True
-                )
-        else:
-            msg = await interaction.followup.send(
-                "称号を外しました。", ephemeral=True
-            )
+                return
 
-        # 4. 最初に表示された「ドロップダウンメニュー選択欄」を削除して消す
-        await interaction.delete_original_response()
+        await interaction.followup.send("称号を外しました。", ephemeral=True)
 
-        # 5. 「称号を変更しました！」の通知メッセージも3秒後に自動削除する
-        await msg.delete(delay=5)
 
 class TitleSelectView(discord.ui.View):
+
     def __init__(self, available_roles: list[discord.Role]):
         super().__init__(timeout=60)
         self.add_item(TitleSelect(available_roles))
 
 
 class MyPageView(discord.ui.View):
+
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="称号着脱", style=discord.ButtonStyle.primary, custom_id="mypage_title_button")
-    async def title_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(
+        label="称号着脱",
+        style=discord.ButtonStyle.primary,
+        custom_id="mypage_title_button",
+    )
+    async def title_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
         user = interaction.user
         guild = interaction.guild
 
-        # 1. ユーザーが現在実際に持っている対象ロールをチェックし、DBになければ自動登録する
-        for role in user.roles:
-            if role.id in ACHIEVEMENT_ROLE_IDS:
-                grant_achievement(user.id, role.id)
-
-        # 2. DBからこのユーザーが獲得している実績ロールID一覧を取得
+        # DBからこのユーザーが獲得している実績ロールID一覧を取得
         unlocked_ids = get_user_achievements(user.id)
 
-        # 3. サーバー内に存在する該当ロールオブジェクトを取得
+        # サーバー内に存在する該当ロールオブジェクトを取得
         available_roles = []
         for rid in unlocked_ids:
             role = guild.get_role(rid)
@@ -145,15 +144,19 @@ class MyPageView(discord.ui.View):
                 available_roles.append(role)
 
         if not available_roles:
-            await interaction.response.send_message("装着できる実績称号を所持していません。", ephemeral=True)
+            await interaction.response.send_message(
+                "装着できる実績称号を所持していません。", ephemeral=True
+            )
             return
 
         view = TitleSelectView(available_roles)
-        await interaction.response.send_message("設定したい称号を選択してください：", view=view, ephemeral=True)
+        await interaction.response.send_message(
+            "設定したい称号を選択してください：", view=view, ephemeral=True
+        )
 
 
 # --------------------------------------------------
-# 管理者用コマンド（実績の解放登録）
+# 管理者用コマンド（実績の解放登録・剥奪）
 # --------------------------------------------------
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -162,9 +165,33 @@ async def give_achievement(ctx, member: discord.Member, role: discord.Role):
     if role.id not in ACHIEVEMENT_ROLE_IDS:
         await ctx.send("指定されたロールは実績ロールリストに含まれていません。")
         return
-    
+
     grant_achievement(member.id, role.id)
-    await ctx.send(f"{member.mention} に実績 **{role.name}** を解放しました！（マイページから装着可能です）")
+    await ctx.send(
+        f"{member.mention} に実績 **{role.name}** を解放しました！（マイページから装着可能です）"
+    )
+
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def take_achievement(ctx, member: discord.Member, role: discord.Role):
+    """管理者がユーザーから「実績獲得権限」を剥奪（DB削除）するコマンド"""
+    if role.id not in ACHIEVEMENT_ROLE_IDS:
+        await ctx.send("指定されたロールは実績ロールリストに含まれていません。")
+        return
+
+    revoke_achievement(member.id, role.id)
+
+    # 装着中であればロールも即時剥奪
+    if role in member.roles:
+        try:
+            await member.remove_roles(role)
+        except Exception:
+            pass
+
+    await ctx.send(
+        f"{member.mention} から実績 **{role.name}** の獲得実績を削除しました。"
+    )
 
 
 @bot.command()
@@ -174,9 +201,10 @@ async def setup_mypage(ctx):
     embed = discord.Embed(
         title="👤 マイページ / 称号設定",
         description="下のボタンから獲得済みの実績称号（ロール）を着脱できます。\n※つけられる称号は同時に1つまでです。",
-        color=discord.Color.blue()
+        color=discord.Color.blue(),
     )
     await ctx.send(embed=embed, view=MyPageView())
     await ctx.message.delete()
+
 
 bot.run(os.getenv("DISCORD_TOKEN"))
