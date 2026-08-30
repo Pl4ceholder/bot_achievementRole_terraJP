@@ -92,10 +92,25 @@ class RecruitModal(discord.ui.Modal, title="募集詳細の入力"):
             name="📝 メッセージ", value=self.message.value, inline=False
         )
 
-        # 4. チャンネルへ送信
-        await target_channel.send(content=mention_str, embed=embed)
+        # 4. チャンネルへメッセージを送信
+        sent_message = await target_channel.send(content=mention_str, embed=embed)
+
+        # 5. 送信メッセージに対してスレッドを作成
+        thread_name = f"【{self.mode}/{self.platform}】{interaction.user.display_name}の募集"
+        thread = await sent_message.create_thread(
+            name=thread_name,
+            auto_archive_duration=1440,  # 24時間非アクティブで自動アーカイブ
+        )
+
+        # ★ 6. 募集主をスレッドに参加させ、スレッド内でメンションを飛ばす
+        await thread.add_user(interaction.user)
+        await thread.send(
+            f"{interaction.user.mention} 募集スレッドが作成されました！参加希望や質問はこちらのチャットで行ってください。"
+        )
+
+        # 実行者への完了メッセージ
         await interaction.followup.send(
-            f"✅ {target_channel.mention} に募集を投稿しました！",
+            f"✅ {target_channel.mention} に募集を投稿し、スレッドを作成しました！",
             ephemeral=True,
         )
 
