@@ -6,6 +6,7 @@ from config import (
     CHANNEL_TMOD,
     CHANNEL_VANILLA,
     ROLE_IDS,
+    VC_CHANNEL_IDS,
 )
 
 
@@ -67,7 +68,16 @@ class RecruitModal(discord.ui.Modal, title="募集詳細の入力"):
 
         mention_str = " ".join(mentions)
 
-        # 3. Embed（埋め込みメッセージ）の生成
+        # ★ 3. VC名の決定とメンション化の処理
+        vc_key = f"{vc_prefix}{self.vc}"
+        vc_channel_id = VC_CHANNEL_IDS.get(vc_key)
+        
+        if vc_channel_id:
+            vc_display = f"<#{vc_channel_id}>"  # チャンネルへのリンク（メンション）
+        else:
+            vc_display = vc_key  # IDが登録されていない場合は文字として表示
+
+        # 4. Embed（埋め込みメッセージ）の生成
         embed = discord.Embed(
             title="⚔️ Terraria マルチ募集",
             color=discord.Color.green(),
@@ -78,9 +88,7 @@ class RecruitModal(discord.ui.Modal, title="募集詳細の入力"):
         )
         embed.add_field(name="🎮 種類", value=self.mode, inline=True)
         embed.add_field(name="💻 機種", value=self.platform, inline=True)
-        embed.add_field(
-            name="🔊 VC", value=f"{vc_prefix}{self.vc}", inline=True
-        )
+        embed.add_field(name="🔊 VC", value=vc_display, inline=True)  # ここを更新
 
         conn_val = (
             self.connection_info.value if self.connection_info.value else "なし"
@@ -92,23 +100,22 @@ class RecruitModal(discord.ui.Modal, title="募集詳細の入力"):
             name="📝 メッセージ", value=self.message.value, inline=False
         )
 
-        # 4. チャンネルへメッセージを送信
+        # 5. チャンネルへメッセージを送信
         sent_message = await target_channel.send(content=mention_str, embed=embed)
 
-        # 5. 送信メッセージに対してスレッドを作成
+        # 6. 送信メッセージに対してスレッドを作成
         thread_name = f"【{self.mode}/{self.platform}】{interaction.user.display_name}の募集"
         thread = await sent_message.create_thread(
             name=thread_name,
-            auto_archive_duration=1440,  # 24時間非アクティブで自動アーカイブ
+            auto_archive_duration=1440,
         )
 
-        # ★ 6. 募集主をスレッドに参加させ、スレッド内でメンションを飛ばす
+        # 7. 募集主をスレッドに参加させ、スレッド内でメンションを飛ばす
         await thread.add_user(interaction.user)
         await thread.send(
             f"{interaction.user.mention} 募集スレッドが作成されました！参加希望や質問はこちらのチャットで行ってください。"
         )
 
-        # 実行者への完了メッセージ
         await interaction.followup.send(
             f"✅ {target_channel.mention} に募集を投稿し、スレッドを作成しました！",
             ephemeral=True,
