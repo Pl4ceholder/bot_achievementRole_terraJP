@@ -58,34 +58,58 @@ def grant_achievement(user_id: int, role_id: int):
 # UIコンポーネント
 # --------------------------------------------------
 class TitleSelect(discord.ui.Select):
+
     def __init__(self, available_roles: list[discord.Role]):
         options = [
             discord.SelectOption(label=role.name, value=str(role.id))
             for role in available_roles
         ]
-        options.append(discord.SelectOption(label="称号をつけない", value="none", description="すべての実績称号を外します"))
-        super().__init__(placeholder="装着する称号を1つ選んでください", options=options)
+        options.append(
+            discord.SelectOption(
+                label="称号をつけない",
+                value="none",
+                description="すべての実績称号を外します",
+            )
+        )
+        super().__init__(
+            placeholder="装着する称号を1つ選んでください", options=options
+        )
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         user = interaction.user
         selected_value = self.values[0]
 
-        # 現在ついているすべての実績系ロールを解除
-        roles_to_remove = [role for role in user.roles if role.id in ACHIEVEMENT_ROLE_IDS]
+        # 1. 現在ついているすべての実績系ロールを解除
+        roles_to_remove = [
+            role for role in user.roles if role.id in ACHIEVEMENT_ROLE_IDS
+        ]
         if roles_to_remove:
             await user.remove_roles(*roles_to_remove)
 
-        # 選択されたロールを1つだけ付与
+        # 2. 選択されたロールを1つだけ付与
         if selected_value != "none":
             selected_role = interaction.guild.get_role(int(selected_value))
             if selected_role:
                 await user.add_roles(selected_role)
-                await interaction.followup.send(f"称号を **{selected_role.name}** に変更しました！", ephemeral=True)
-                return
+                msg = await interaction.followup.send(
+                    f"称号を **{selected_role.name}** に変更しました！",
+                    ephemeral=True,
+                )
+            else:
+                msg = await interaction.followup.send(
+                    "指定されたロールが見つかりませんでした。", ephemeral=True
+                )
+        else:
+            msg = await interaction.followup.send(
+                "称号を外しました。", ephemeral=True
+            )
 
-        await interaction.followup.send("称号を外しました。", ephemeral=True)
+        # 3. 最初に表示された「ドロップダウンメニュー選択欄」を削除して消す
+        await interaction.delete_original_response()
 
+        # 4. 「称号を変更しました！」の通知メッセージも3秒後に自動削除する
+        await msg.delete(delay=5)
 
 class TitleSelectView(discord.ui.View):
     def __init__(self, available_roles: list[discord.Role]):
