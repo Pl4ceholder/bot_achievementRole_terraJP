@@ -11,7 +11,7 @@ class AdminCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    # --- 実績ロールのみをオートコンプリート（選択肢絞り込み）する関数 ---
+    # オートコンプリート関数
     async def achievement_role_autocomplete(
         self,
         interaction: discord.Interaction,
@@ -21,12 +21,29 @@ class AdminCog(commands.Cog):
         for role_id in ACHIEVEMENT_ROLE_IDS:
             role = interaction.guild.get_role(role_id)
             if role:
-                # ユーザーが入力中の文字でフィルタリング（未入力なら全件）
                 if current.lower() in role.name.lower():
                     choices.append(
                         app_commands.Choice(name=role.name, value=str(role.id))
                     )
-        return choices[:25]  # Discordの仕様上、最大25件まで
+        return choices[:25]
+
+    # 入力された文字列（IDまたはロール名）からロールオブジェクトを特定するヘルパー関数
+    def _find_achievement_role(
+        self, guild: discord.Guild, input_val: str
+    ) -> discord.Role | None:
+        # 1. 数字（ID）として渡された場合
+        if input_val.isdigit():
+            role_id = int(input_val)
+            if role_id in ACHIEVEMENT_ROLE_IDS:
+                return guild.get_role(role_id)
+
+        # 2. ロール名として直接渡された場合
+        for role_id in ACHIEVEMENT_ROLE_IDS:
+            role = guild.get_role(role_id)
+            if role and role.name == input_val:
+                return role
+
+        return None
 
     @app_commands.command(
         name="help_admin", description="【管理者専用】ヘルプを表示します"
@@ -79,25 +96,24 @@ class AdminCog(commands.Cog):
         member="実績を付与するユーザーを選択",
         role="付与する実績ロールを選択",
     )
-    @app_commands.autocomplete(role=achievement_role_autocomplete)  # ★オートコンプリートを設定
+    @app_commands.autocomplete(role=achievement_role_autocomplete)
     @app_commands.default_permissions(administrator=True)
     async def give_achievement(
         self,
         interaction: discord.Interaction,
         member: discord.Member,
-        role: str,  # ロールIDを受け取るため str に変更
+        role: str,
     ):
-        role_id = int(role)
-        target_role = interaction.guild.get_role(role_id)
+        target_role = self._find_achievement_role(interaction.guild, role)
 
-        if not target_role or role_id not in ACHIEVEMENT_ROLE_IDS:
+        if not target_role:
             await interaction.response.send_message(
-                "⚠️ 無効な実績ロールが選択されました。",
+                "⚠️ 有効な実績ロールが選択されていません。候補一覧から選択してください。",
                 ephemeral=True,
             )
             return
 
-        grant_achievement(member.id, role_id)
+        grant_achievement(member.id, target_role.id)
         await interaction.response.send_message(
             f"✅ {member.mention} に実績 **{target_role.name}** を付与しました！（マイページから装着可能です）"
         )
@@ -110,25 +126,24 @@ class AdminCog(commands.Cog):
         member="実績を剥奪するユーザーを選択",
         role="剥奪する実績ロールを選択",
     )
-    @app_commands.autocomplete(role=achievement_role_autocomplete)  # ★オートコンプリートを設定
+    @app_commands.autocomplete(role=achievement_role_autocomplete)
     @app_commands.default_permissions(administrator=True)
     async def take_achievement(
         self,
         interaction: discord.Interaction,
         member: discord.Member,
-        role: str,  # ロールIDを受け取るため str に変更
+        role: str,
     ):
-        role_id = int(role)
-        target_role = interaction.guild.get_role(role_id)
+        target_role = self._find_achievement_role(interaction.guild, role)
 
-        if not target_role or role_id not in ACHIEVEMENT_ROLE_IDS:
+        if not target_role:
             await interaction.response.send_message(
-                "⚠️ 無効な実績ロールが選択されました。",
+                "⚠️ 有効な実績ロールが選択されていません。候補一覧から選択してください。",
                 ephemeral=True,
             )
             return
 
-        revoke_achievement(member.id, role_id)
+        revoke_achievement(member.id, target_role.id)
 
         if target_role in member.roles:
             try:
