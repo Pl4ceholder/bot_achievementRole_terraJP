@@ -1,6 +1,7 @@
 import os
 from threading import Thread
 import discord
+from discord import app_commands
 from discord.ext import commands
 from flask import Flask
 import redis
@@ -22,9 +23,9 @@ def run_http():
 # スレッドでHTTPサーバーを並行起動
 Thread(target=run_http).start()
 
-# --- 以降、既存のdiscord.pyの処理 ---
-
-# 1. 環境変数からRedis接続情報を取得
+# --------------------------------------------------
+# Redis & Bot 設定
+# --------------------------------------------------
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
@@ -45,13 +46,13 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # DB操作用関数
 # --------------------------------------------------
 def get_user_achievements(user_id: int) -> list[int]:
-    """ユーザーが解放済みの実績ロールIDを取得"""
+    """ユーザーが解放済みの実績ロールIDリストを取得"""
     role_ids = r.smembers(f"user:{user_id}:achievements")
     return [int(rid) for rid in role_ids]
 
 
 def grant_achievement(user_id: int, role_id: int):
-    """ユーザーに実績を解放"""
+    """ユーザーに実績を解放（DBに追加）"""
     r.sadd(f"user:{user_id}:achievements", role_id)
 
 
@@ -78,7 +79,7 @@ class TitleSelect(discord.ui.Select):
             )
         )
         super().__init__(
-            placeholder="装着する称号を1つ選んでください", options=options
+            placeholder="装着する称号を選択してください", options=options
         )
 
     async def callback(self, interaction: discord.Interaction):
@@ -86,7 +87,7 @@ class TitleSelect(discord.ui.Select):
         user = interaction.user
         selected_value = self.values[0]
 
-        # 1. 選択ボックスのある元のメッセージを削除
+        # 1. 選択ドロップダウンのメッセージを削除
         await interaction.delete_original_response()
 
         # 2. 現在ついているすべての実績系ロールを解除
@@ -133,10 +134,10 @@ class MyPageView(discord.ui.View):
         user = interaction.user
         guild = interaction.guild
 
-        # DBからこのユーザーが獲得している実績ロールID一覧を取得
+        # DBから解放済みの実績ロールIDを取得
         unlocked_ids = get_user_achievements(user.id)
 
-        # サーバー内に存在する該当ロールオブジェクトを取得
+        # ロールオブジェクトに変換
         available_roles = []
         for rid in unlocked_ids:
             role = guild.get_role(rid)
@@ -156,55 +157,143 @@ class MyPageView(discord.ui.View):
 
 
 # --------------------------------------------------
-# 管理者用コマンド（実績の解放登録・剥奪）
+# Bot起動時イベント（スラッシュコマンドの同期）
 # --------------------------------------------------
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def give_achievement(ctx, member: discord.Member, role: discord.Role):
-    """管理者がユーザーに「実績獲得権限」を与えるコマンド"""
+@bot.event
+async def on_ready():
+    # MyPageViewの永続化
+    bot.add_view(MyPageView())
+
+    # スラッシュコマンドをDiscordサーバー側と同期
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} command(s)")
+    except Exception as e:
+        print(f"Failed to sync commands: {e}")
+
+    print(f"Logged in as {bot.user}")
+
+
+# --------------------------------------------------
+# 管理者用スラッシュコマンド (/ コマンド)
+# --------------------------------------------------
+@bot.tree.command(
+    name="help_admin", description="【管理者専用】ヘルプを表示します"
+)
+@app_commands.default_permissions(administrator=True)
+async def help_admin(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🛠️ 管理者専用コマンド一覧",
+        description="スラッシュコマンド（ `/` ）を入力すると候補が表示されます。",
+        color=discord.Color.gold(),
+    )
+
+    embed.add_field(
+        name="📌 マイページパネル設置",
+        value="`/setup_mypage`\nユーザーが称号を着脱するためのマイページパネルを設置します。",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="🎁 実績の付与（DB登録）",
+        value=(
+            "`/give_achievement`\n"
+            "指定したユーザーに実績の獲得権限（DB登録）を与えます。"
+        ),
+        inline=False,
+    )
+
+    embed.add_field(
+        name="🗑️ 実績の剥奪（DB削除）",
+        value=(
+            "`/take_achievement`\n"
+            "指定したユーザーから実績の獲得権限を剥奪（DB削除）します。"
+        ),
+        inline=False,
+    )
+
+    embed.set_footer(
+        text="※これらのコマンドは「管理者権限」を持つユーザーのみ表示・実行可能です。"
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(
+    name="give_achievement", description="【管理者専用】ユーザーに実績を付与"
+)
+@app_commands.describe(
+    member="実績を付与するユーザーを選択", role="付与する実績ロールを選択"
+)
+@app_commands.default_permissions(administrator=True)
+async def give_achievement(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    role: discord.Role,
+):
     if role.id not in ACHIEVEMENT_ROLE_IDS:
-        await ctx.send("指定されたロールは実績ロールリストに含まれていません。")
+        await interaction.response.send_message(
+            f"⚠️ **{role.name}** は実績対象のロールリストに含まれていません。",
+            ephemeral=True,
+        )
         return
 
     grant_achievement(member.id, role.id)
-    await ctx.send(
-        f"{member.mention} に実績 **{role.name}** を解放しました！（マイページから装着可能です）"
+    await interaction.response.send_message(
+        f"✅ {member.mention} に実績 **{role.name}** を付与しました！（マイページから装着可能です）"
     )
 
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def take_achievement(ctx, member: discord.Member, role: discord.Role):
-    """管理者がユーザーから「実績獲得権限」を剥奪（DB削除）するコマンド"""
+@bot.tree.command(
+    name="take_achievement",
+    description="【管理者専用】ユーザーから実績を剥奪",
+)
+@app_commands.describe(
+    member="実績を剥奪するユーザーを選択", role="剥奪する実績ロールを選択"
+)
+@app_commands.default_permissions(administrator=True)
+async def take_achievement(
+    interaction: discord.Interaction,
+    member: discord.Member,
+    role: discord.Role,
+):
     if role.id not in ACHIEVEMENT_ROLE_IDS:
-        await ctx.send("指定されたロールは実績ロールリストに含まれていません。")
+        await interaction.response.send_message(
+            f"⚠️ **{role.name}** は実績対象のロールリストに含まれていません。",
+            ephemeral=True,
+        )
         return
 
     revoke_achievement(member.id, role.id)
 
-    # 装着中であればロールも即時剥奪
+    # 現在装着中であれば実際のロールも剥奪
     if role in member.roles:
         try:
             await member.remove_roles(role)
         except Exception:
             pass
 
-    await ctx.send(
-        f"{member.mention} から実績 **{role.name}** の獲得実績を削除しました。"
+    await interaction.response.send_message(
+        f"🗑️ {member.mention} から実績 **{role.name}** の獲得権限を剥奪しました。"
     )
 
 
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def setup_mypage(ctx):
-    """マイページパネル設置コマンド"""
+@bot.tree.command(
+    name="setup_mypage",
+    description="【管理者専用】マイページ（称号設定）パネルを設置",
+)
+@app_commands.default_permissions(administrator=True)
+async def setup_mypage(interaction: discord.Interaction):
     embed = discord.Embed(
         title="👤 マイページ / 称号設定",
         description="下のボタンから獲得済みの実績称号（ロール）を着脱できます。\n※つけられる称号は同時に1つまでです。",
         color=discord.Color.blue(),
     )
-    await ctx.send(embed=embed, view=MyPageView())
-    await ctx.message.delete()
+    # パネルを送信
+    await interaction.channel.send(embed=embed, view=MyPageView())
+    # 実行者への完了通知（本人のみ表示）
+    await interaction.response.send_message(
+        "マイページパネルを設置しました！", ephemeral=True
+    )
 
 
 bot.run(os.getenv("DISCORD_TOKEN"))
