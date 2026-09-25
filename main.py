@@ -7,6 +7,7 @@ from flask import Flask
 
 from cogs.mypage import MyPageView
 from cogs.recruitment import RecruitmentPanelView
+from cogs.quizzes import QuizPanelView
 from config import DISCORD_TOKEN, GUILD_ID  # GUILD_ID をインポート
 
 # Renderのポート検知を通す軽量Flaskアプリ
@@ -37,6 +38,7 @@ async def setup_hook():
     """Bot起動準備時にCogを一括ロードおよびボタンの永続化"""
     bot.add_view(MyPageView())
     bot.add_view(RecruitmentPanelView())
+    bot.add_view(QuizPanelView())
 
     for filename in os.listdir("./cogs"):
         if filename.endswith(".py"):
