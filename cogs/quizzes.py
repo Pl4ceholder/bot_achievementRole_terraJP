@@ -27,9 +27,12 @@ class QuizCreateModal(discord.ui.Modal, title="クイズ登録"):
         label="カテゴリ（任意）", required=False, max_length=100
     )
     entries = discord.ui.TextInput(
-        label="選択肢 または 正解（1行に1つ）",
+        label="選択肢 または 必要な回答要素（1行に1つ）",
         style=discord.TextStyle.paragraph,
-        placeholder="選択式: 選択肢を改行で入力\n記述式: 正解を改行で入力",
+        placeholder=(
+            "選択式: 選択肢を改行で入力\n"
+            "記述式: 必要な回答をすべて改行で入力（順不同）"
+        ),
         max_length=4000,
     )
     correct = discord.ui.TextInput(
@@ -38,11 +41,18 @@ class QuizCreateModal(discord.ui.Modal, title="クイズ登録"):
         max_length=100,
     )
 
-    def __init__(self, kind: str):
+    def __init__(self, kind: str, answer_mode: str = "any"):
         super().__init__(title="選択式クイズ登録" if kind == "choice" else "記述式クイズ登録")
         self.kind = kind
+        self.answer_mode = answer_mode
         if kind == "text":
             self.remove_item(self.correct)
+            if answer_mode == "all":
+                self.entries.label = "必要な回答要素（すべて・順不同）"
+                self.entries.placeholder = "例:\nCopper Bar×8\nWood×4"
+            else:
+                self.entries.label = "正解候補（いずれか1つで正解）"
+                self.entries.placeholder = "例:\nCopper Pickaxe\n銅のツルハシ"
 
     async def on_submit(self, interaction: discord.Interaction):
         entries = _split_lines(self.entries.value)
@@ -75,6 +85,7 @@ class QuizCreateModal(discord.ui.Modal, title="クイズ登録"):
             self.category.value.strip() or None,
             choices,
             answers,
+            self.answer_mode,
         )
         await interaction.response.send_message(
             f"クイズを登録しました。ID: `{quiz_id}`", ephemeral=True
@@ -82,20 +93,37 @@ class QuizCreateModal(discord.ui.Modal, title="クイズ登録"):
 
 
 class TextAnswerModal(discord.ui.Modal, title="クイズに回答"):
-    answer = discord.ui.TextInput(label="回答", max_length=500)
+    answer = discord.ui.TextInput(
+        label="必要な回答を1行ずつ入力",
+        style=discord.TextStyle.paragraph,
+        placeholder="例:\nCopper Bar×8\nWood×4",
+        max_length=1000,
+    )
 
     def __init__(self, quiz: dict):
         super().__init__()
         self.quiz = quiz
+        if quiz.get("answer_mode", "any") == "all":
+            self.answer.label = "必要な回答を1行ずつ入力（順不同）"
+            self.answer.placeholder = "登録された回答要素をすべて入力してください"
+        else:
+            self.answer.label = "回答（正解候補のいずれか1つ）"
+            self.answer.placeholder = "正解だと思う候補を1つ入力してください"
 
     async def on_submit(self, interaction: discord.Interaction):
-        correct = any(
-            _normalize_answer(self.answer.value) == _normalize_answer(answer)
-            for answer in self.quiz["answers"]
-        )
+        expected = {_normalize_answer(answer) for answer in self.quiz["answers"]}
+        submitted = {
+            _normalize_answer(answer) for answer in _split_lines(self.answer.value)
+        }
+        answer_mode = self.quiz.get("answer_mode", "any")
+        if answer_mode == "all":
+            correct = submitted == expected
+        else:
+            correct = len(submitted) == 1 and submitted.issubset(expected)
         result = "✅ 正解です！" if correct else "❌ 不正解です。"
         await interaction.response.send_message(
-            f"{result}\n正解: {' / '.join(self.quiz['answers'])}", ephemeral=True
+            f"{result}\n正解:\n" + "\n".join(self.quiz["answers"]),
+            ephemeral=True,
         )
 
 
@@ -154,12 +182,24 @@ class QuizKindSelect(discord.ui.Select):
             placeholder="登録するクイズ形式を選んでください",
             options=[
                 discord.SelectOption(label="選択式", value="choice"),
-                discord.SelectOption(label="記述式", value="text"),
+                discord.SelectOption(
+                    label="記述式・複数正解候補（どれか1つ）", value="text_any"
+                ),
+                discord.SelectOption(
+                    label="記述式・複数回答（全部、順不同）", value="text_all"
+                ),
             ],
         )
 
     async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(QuizCreateModal(self.values[0]))
+        selected = self.values[0]
+        if selected == "choice":
+            modal = QuizCreateModal("choice")
+        else:
+            modal = QuizCreateModal(
+                "text", answer_mode="all" if selected == "text_all" else "any"
+            )
+        await interaction.response.send_modal(modal)
 
 
 class QuizKindView(discord.ui.View):
@@ -177,11 +217,21 @@ async def send_quiz_list(interaction: discord.Interaction):
     for offset in range(0, len(quizzes), 5):
         embed = discord.Embed(title="登録済みクイズ", color=discord.Color.blurple())
         for quiz in quizzes[offset:offset + 5]:
-            kind = "選択式" if quiz["kind"] == "choice" else "記述式"
+            if quiz["kind"] == "choice":
+                kind = "選択式"
+            elif quiz.get("answer_mode", "any") == "all":
+                kind = "記述式（全要素・順不同）"
+            else:
+                kind = "記述式（正解候補から1つ）"
             details = [f"形式: {kind}", f"カテゴリ: {quiz['category'] or 'なし'}"]
             if quiz["choices"]:
                 details.append("選択肢: " + " / ".join(quiz["choices"]))
-            details.append("回答: " + " / ".join(quiz["answers"]))
+            if quiz["kind"] == "choice":
+                details.append("正解: " + " / ".join(quiz["answers"]))
+            elif quiz.get("answer_mode", "any") == "all":
+                details.append("必要な回答要素: " + " / ".join(quiz["answers"]))
+            else:
+                details.append("正解候補: " + " / ".join(quiz["answers"]))
             embed.add_field(
                 name=f"ID {quiz['id']} · {quiz['question'][:200]}",
                 value="\n".join(details)[:1024], inline=False

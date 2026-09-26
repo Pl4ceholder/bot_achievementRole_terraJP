@@ -27,6 +27,7 @@ def create_quiz(
     category: str | None,
     choices: list[str],
     answers: list[str],
+    answer_mode: str = "any",
 ) -> str:
     """クイズを登録し、クイズIDを返す。"""
     quiz_id = str(r.incr("quiz:next_id"))
@@ -37,6 +38,7 @@ def create_quiz(
         "category": category or "",
         "choices": choices,
         "answers": answers,
+        "answer_mode": answer_mode,
     }
     r.set(f"quiz:{quiz_id}", json.dumps(quiz, ensure_ascii=False))
     r.sadd("quizzes", quiz_id)
