@@ -90,6 +90,22 @@ class AdminCog(commands.Cog):
             ),
             inline=False,
         )
+        embed.add_field(
+            name="📋 立っている募集の確認",
+            value=(
+                "`/recruit_list`\n"
+                "いま立っている募集を、書き込みの数と「あと何時間で流れるか」つきで一覧します。"
+            ),
+            inline=False,
+        )
+        embed.add_field(
+            name="🔒 募集の締め切り",
+            value=(
+                "`/recruit_close`\n"
+                "選んだ募集のスレッドを閉じます（自動で流れるのを待たずに片付けられます）。"
+            ),
+            inline=False,
+        )
         embed.set_footer(
             text="※これらのコマンドは「管理者権限」を持つユーザーのみ表示・実行可能です。"
         )

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -5,9 +7,34 @@ from config import (
     CHANNEL_CONSOLE,
     CHANNEL_TMOD,
     CHANNEL_VANILLA,
+    RECRUIT_CHANNELS,
     ROLE_IDS,
     VC_CHANNEL_IDS,
+    WEB_SYNC_BASE,
 )
+from web_sync import collect_recruitments, deadline_of, remaining_text, to_unix
+
+# 一覧に出す募集の上限（Embed の項目は 25 まで。それ以上は先頭だけ出す）
+LIST_MAX = 20
+
+
+def author_line(item: dict) -> str:
+    """「募集主: **名前**（3 時間前）」。時刻が読めないときは名前だけ。"""
+    name = item.get("authorName") or "（名前不明）"
+    seconds = to_unix(item.get("startedAt"))
+
+    return f"募集主: **{name}**" + (f"（<t:{seconds}:R>）" if seconds else "")
+
+
+def activity_line(item: dict) -> str:
+    """「書き込み 6 件 ・ 最後の書き込み 3 分前」"""
+    parts = [f"書き込み {int(item.get('messageCount') or 0)} 件"]
+
+    seconds = to_unix(item.get("lastActivityAt"))
+    if seconds:
+        parts.append(f"最後の書き込み <t:{seconds}:R>")
+
+    return " ・ ".join(parts)
 
 
 # ステップ2：テキスト入力フォーム（モーダル）
@@ -268,6 +295,156 @@ class RecruitmentCog(commands.Cog):
         await interaction.response.send_message(
             "募集パネルを設置しました！", ephemeral=True
         )
+
+    # 募集の管理（一覧と締め切り） ------------------------------------------------
+    #
+    # Discord のスレッドは、最後の書き込みから一定時間（普通は 24 時間）で自動的に流れる。
+    # それより早く片付けたいときや、いま立っているものを一度に見たいときのためのコマンド。
+
+    async def recruit_autocomplete(
+        self, interaction: discord.Interaction, current: str
+    ) -> list[app_commands.Choice[str]]:
+        """いま立っている募集から選べるようにする。
+
+        オートコンプリートは数秒で返す必要があるので、スレッドの一覧だけを取る
+        （メッセージの中身は読まない。スレッドの名前で選ぶ）。
+        """
+        guild = interaction.guild
+        if guild is None:
+            return []
+
+        threads = [
+            thread
+            for thread in await guild.active_threads()
+            if thread.parent_id in RECRUIT_CHANNELS
+        ]
+        threads.sort(key=lambda thread: thread.created_at, reverse=True)
+
+        current = current.strip().lower()
+        choices = []
+        for thread in threads:
+            if current and current not in thread.name.lower():
+                continue
+            choices.append(app_commands.Choice(name=thread.name[:100], value=str(thread.id)))
+
+        return choices[:25]
+
+    @app_commands.command(
+        name="recruit_list",
+        description="【管理者専用】いま立っているマルチ募集を確認",
+    )
+    @app_commands.default_permissions(administrator=True)
+    async def recruit_list(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+
+        guild = interaction.guild
+        if guild is None:
+            await interaction.followup.send("サーバーの中で使ってください。")
+            return
+
+        items = await collect_recruitments(guild, RECRUIT_CHANNELS)
+        now = datetime.now(timezone.utc)
+
+        embed = discord.Embed(
+            title=f"⚔️ いま立っている募集（{len(items)} 件）",
+            color=discord.Color.green(),
+        )
+
+        if not items:
+            embed.description = "いま立っている募集はありません。"
+        else:
+            for item in items[:LIST_MAX]:
+                lines = [
+                    author_line(item),
+                    activity_line(item),
+                    remaining_text(deadline_of(item), now),
+                    f"[スレッドを開く](https://discord.com/channels/{guild.id}/{item['id']})",
+                ]
+                embed.add_field(
+                    name=f"{item.get('mode') or '？'} / {item.get('platform') or '？'}",
+                    value="\n".join(line for line in lines if line),
+                    inline=False,
+                )
+
+            if len(items) > LIST_MAX:
+                embed.description = (
+                    f"多いので、新しい {LIST_MAX} 件だけ出しています"
+                    f"（ほか {len(items) - LIST_MAX} 件）。"
+                )
+
+        embed.set_footer(
+            text=f"締め切るときは /recruit_close ／ サイト: {WEB_SYNC_BASE}/recruit"
+        )
+        await interaction.followup.send(embed=embed)
+
+    @app_commands.command(
+        name="recruit_close",
+        description="【管理者専用】募集を締め切る（スレッドを閉じて、書き込めなくする）",
+    )
+    @app_commands.describe(recruitment="締め切る募集（入力を始めると候補が出ます）")
+    @app_commands.autocomplete(recruitment=recruit_autocomplete)
+    @app_commands.default_permissions(administrator=True)
+    async def recruit_close(self, interaction: discord.Interaction, recruitment: str):
+        await interaction.response.defer(ephemeral=True)
+
+        guild = interaction.guild
+        if guild is None:
+            await interaction.followup.send("サーバーの中で使ってください。")
+            return
+
+        try:
+            thread_id = int(recruitment)
+        except (TypeError, ValueError):
+            await interaction.followup.send("候補から募集を選んでください。")
+            return
+
+        try:
+            target = await guild.fetch_channel(thread_id)
+        except discord.NotFound:
+            await interaction.followup.send(
+                "その募集は見つかりませんでした（すでに流れているかもしれません）。"
+            )
+            return
+        except discord.HTTPException as error:
+            await interaction.followup.send(f"募集を開けませんでした: {error}")
+            return
+
+        if (
+            not isinstance(target, discord.Thread)
+            or target.parent_id not in RECRUIT_CHANNELS
+        ):
+            await interaction.followup.send("それは募集のスレッドではありません。")
+            return
+
+        if target.archived:
+            await interaction.followup.send("その募集はすでに締め切られています。")
+            return
+
+        try:
+            # 参加していた人にも分かるように、締め切ったことを書いてから閉じる。
+            # locked にすると、書き込みでスレッドが生き返らない（締め切りの意味が無くなる）。
+            await target.send(
+                f"🔒 この募集は {interaction.user.mention} の操作で締め切られました。"
+                "\nまた遊ぶときは、「募集を開始する」から新しい募集を立ててください。"
+            )
+            await target.edit(archived=True, locked=True)
+        except discord.HTTPException as error:
+            await interaction.followup.send(f"締め切れませんでした: {error}")
+            return
+
+        await interaction.followup.send(
+            f"✅ 募集を締め切りました。サイトの一覧からも、まもなく消えます。\n{target.mention}"
+        )
+
+        # サイトからも早く消えるように、次の定期同期を待たずに知らせる。
+        # 送れなくても、次の定期同期が拾うので、ここで失敗しても構わない。
+        sync = self.bot.get_cog("SiteSyncCog")
+        if sync is None:
+            return
+        try:
+            await sync.sync_once()
+        except Exception as error:
+            print(f"締め切ったあとの同期でエラーが起きました: {error}")
 
 
 async def setup(bot: commands.Bot):

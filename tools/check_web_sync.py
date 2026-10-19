@@ -3,8 +3,14 @@
     python tools/check_web_sync.py            # 送る中身を表示するだけ
     python tools/check_web_sync.py --post     # サイトへ実際に送る
 
-送る中身（募集・イベント）を表示したうえで、最後に「片方の同期が失敗しても、もう片方は
-行われるか」も確かめる。合っていなければ終了コード 1 で終わる。
+送る中身（募集・イベント）を表示したうえで、最後に次の規則も確かめる。合っていなければ
+終了コード 1 で終わる。
+
+- 片方の同期が失敗しても、もう片方は行われるか
+- ID から最後の書き込みの時刻を取り出せるか
+- 募集が流れる時刻を求められるか（Discord の一覧と、サイトの表示に使う）
+- 流れるまでの残りを文にできるか
+- Discord の時刻表示（`<t:...>`）に使う秒を取り出せるか
 
 このファイルは discord も aiohttp も使わない（標準ライブラリだけ）。Bot のトークンが
 無くても動くので、送る形が合っているかを手元で確かめられる。
@@ -37,8 +43,11 @@ from web_sync import (  # noqa: E402
     build_payload,
     collect_events,
     collect_recruitments,
+    deadline_of,
+    remaining_text,
     run_each,
     snowflake_time,
+    to_unix,
 )
 
 # 確認用のダミー。Discord のオブジェクトと同じ形（使う属性だけ）にしている。
@@ -112,6 +121,7 @@ class FakeThread:
         self.last_message_id = last_message_id
         self.message_count = message_count
         self.auto_archive_duration = auto_archive_duration
+        self.name = ""  # 本物と同じく、スレッドには名前がある（make_thread が入れる）
 
 
 class FakeStatus:
@@ -180,13 +190,19 @@ def make_thread(
     author = FakeUser(user_id=thread_id + 1000, display_name=name)
     embed = FakeEmbed(fields, FakeAuthor(name=name, icon_url="https://example.com/i.png"))
     channel.message = FakeMessage(message_id=thread_id, embed=embed, author=author)
-    return FakeThread(
+    thread = FakeThread(
         thread_id,
         channel,
         created_at,
         last_message_id=snowflake_for(last_activity_at or created_at),
         message_count=message_count,
     )
+    # 本物のスレッドには名前がある（cogs/recruitment.py の thread_name と同じ形）。
+    # 管理コマンドの候補はこの名前で選ぶので、ダミーにも持たせる。
+    mode = fields[0][1] if fields else ""
+    platform = fields[1][1] if len(fields) > 1 else ""
+    thread.name = f"【{mode}/{platform}】{name}の募集" if platform else f"{name}のスレッド"
+    return thread
 
 
 def sample_guild() -> FakeGuild:
@@ -328,6 +344,49 @@ def check_snowflake() -> bool:
     return snowflake_time(snowflake_for(moment)) == moment.isoformat().replace("+00:00", "Z")
 
 
+def check_deadline() -> bool:
+    """募集が流れる時刻の求め方（サイト側 worker/recruitments.js と同じ考え方か）。
+
+    書き込みが続いた募集は、立てた時刻ではなく「最後の書き込み」から数える。材料が
+    無いときは、立てた時刻から既定の 24 時間後にしておく（判断できないものは消さない）。
+    """
+    bumped = deadline_of(
+        {
+            "startedAt": "2026-10-18T12:00:00Z",
+            "lastActivityAt": "2026-10-19T10:00:00Z",
+            "archiveMinutes": 1440,
+        }
+    )
+    unknown = deadline_of(
+        {
+            "startedAt": "2026-10-18T12:00:00Z",
+            "lastActivityAt": "",
+            "archiveMinutes": 0,
+        }
+    )
+
+    return bumped == "2026-10-20T10:00:00Z" and unknown == "2026-10-19T12:00:00Z"
+
+
+def check_remaining() -> bool:
+    """流れるまでの残りの言い方（Discord の一覧 `/recruit_list` に出る文）。"""
+    now = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+
+    return (
+        remaining_text("2026-10-20T10:00:00Z", now) == "あと 22 時間で流れます"
+        and remaining_text("2026-10-19T12:30:00Z", now) == "あと 30 分で流れます"
+        and remaining_text("2026-10-19T11:30:00Z", now) == "流れる時刻を過ぎました"
+        and remaining_text("", now) == ""
+    )
+
+
+def check_unix() -> bool:
+    """Discord の時刻表示（`<t:...>`）に使う秒を取り出せるか。"""
+    moment = datetime(2026, 10, 19, 3, 20, tzinfo=timezone.utc)
+
+    return to_unix("2026-10-19T03:20:00Z") == int(moment.timestamp()) and to_unix("") == 0
+
+
 async def main() -> None:
     guild = sample_guild()
     channel_ids = {CHANNEL_TMOD, CHANNEL_CONSOLE, CHANNEL_VANILLA}
@@ -353,6 +412,9 @@ async def main() -> None:
     checks = (
         ("片方の同期が失敗しても、もう片方は行われる", await check_run_each()),
         ("ID から最後の書き込みの時刻を取り出せる", check_snowflake()),
+        ("募集が流れる時刻を求められる（書き込みで延びる）", check_deadline()),
+        ("流れるまでの残りを文にできる", check_remaining()),
+        ("Discord の時刻表示に使う秒を取り出せる", check_unix()),
     )
     for title, ok in checks:
         print(("OK   " if ok else "ダメ  ") + title)

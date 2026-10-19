@@ -1,7 +1,9 @@
-"""サイト（Terraria JP 公式サイト）へ送る中身を組み立てる。
+"""サイト（Terraria JP 公式サイト）へ送る中身と、募集を Discord で見せるための計算。
 
 このファイルは discord を import しない。そのため Bot のトークンが無くても、
-`tools/check_web_sync.py` で中身を組み立てて確かめられる。
+`tools/check_web_sync.py` で中身を組み立てて確かめられる。Discord 上の一覧
+（cogs/recruitment.py の `/recruit_list`）も、ここで作った値をそのまま並べるだけにして、
+「いつ流れるか」の数え方が 2 か所に分かれないようにしている。
 
 いま送っているのは 2 つ。
 
@@ -13,12 +15,16 @@
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
 
 # Discord の ID に埋まっている時刻の基準（2015-01-01T00:00:00Z）
 DISCORD_EPOCH_MS = 1420070400000
+
+# Discord の既定。最後の書き込みから 24 時間で流れる
+# （サイト側 worker/recruitments.js の DEFAULT_ARCHIVE_MINUTES と同じ）
+DEFAULT_ARCHIVE_MINUTES = 1440
 
 # 募集の embed の見出し（cogs/recruitment.py）を探すためのキーワード。
 # 絵文字や細かい文言が変わっても壊れないよう、絵文字を外した語で探す。
@@ -67,6 +73,59 @@ def snowflake_time(snowflake) -> str:
         ((value >> 22) + DISCORD_EPOCH_MS) / 1000, tz=timezone.utc
     )
     return moment.isoformat().replace("+00:00", "Z")
+
+
+def parse_iso(value):
+    """ISO 8601 の文字列を時刻にする。読めなければ None。"""
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment
+
+
+def to_unix(value) -> int:
+    """Discord の時刻表示（`<t:...>`）に使う秒。読めなければ 0。"""
+    moment = parse_iso(value)
+    return int(moment.timestamp()) if moment is not None else 0
+
+
+def deadline_of(item: dict) -> str:
+    """その募集が Discord から流れる時刻（ISO 8601、UTC）。
+
+    最後の書き込みの時刻から、Discord の設定（分）だけ後。分からないときは、立てた時刻から
+    既定の 24 時間後にしておく。サイト側（worker/recruitments.js）と同じ考え方。
+    """
+    base = parse_iso(item.get("lastActivityAt") or item.get("startedAt") or "")
+    if base is None:
+        return ""
+
+    minutes = to_int(item.get("archiveMinutes")) or DEFAULT_ARCHIVE_MINUTES
+    return (base + timedelta(minutes=minutes)).isoformat().replace("+00:00", "Z")
+
+
+def remaining_text(deadline_iso: str, now: datetime) -> str:
+    """募集が流れるまでの残りを、短い文にする。読めなければ空文字。"""
+    deadline = parse_iso(deadline_iso)
+    if deadline is None:
+        return ""
+
+    left = deadline - now
+    if left.total_seconds() <= 0:
+        return "流れる時刻を過ぎました"
+
+    minutes = int(left.total_seconds() // 60)
+    if minutes < 60:
+        return f"あと {minutes} 分で流れます"
+
+    hours = round(minutes / 60)
+    if hours < 24:
+        return f"あと {hours} 時間で流れます"
+
+    return f"あと {round(hours / 24)} 日で流れます"
 
 
 def vc_name(guild, value: str) -> str:

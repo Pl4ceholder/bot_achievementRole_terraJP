@@ -15,6 +15,10 @@ CHANNEL_TMOD = 1543542274963804220
 CHANNEL_CONSOLE = 1543542426558398524
 CHANNEL_VANILLA = 1543542257351790682
 
+# 募集が立つチャンネル。サイトへの同期（cogs/sync.py）と、Discord 上の一覧
+# （cogs/recruitment.py）で同じものを使う（片方だけ直して食い違うのを防ぐ）
+RECRUIT_CHANNELS = {CHANNEL_TMOD, CHANNEL_CONSOLE, CHANNEL_VANILLA}
+
 ROLE_IDS = {
     "モッドマルチ": 1543544171069972500,  # ✋ | モッドマルチ希望 のロールID
     "バニラマルチ": 1543544231652491324,  # ✋ | バニラテラリアマルチ希望 のロールID

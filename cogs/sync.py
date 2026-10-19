@@ -19,10 +19,8 @@ import aiohttp
 from discord.ext import commands, tasks
 
 from config import (
-    CHANNEL_CONSOLE,
-    CHANNEL_TMOD,
-    CHANNEL_VANILLA,
     GUILD_ID,
+    RECRUIT_CHANNELS,
     SYNC_INTERVAL_MINUTES,
     SYNC_SECRET,
     WEB_SYNC_BASE,
@@ -34,9 +32,6 @@ from web_sync import (
     collect_recruitments,
     run_each,
 )
-
-# 募集が立つチャンネル（cogs/recruitment.py と同じ）
-RECRUIT_CHANNELS = {CHANNEL_TMOD, CHANNEL_CONSOLE, CHANNEL_VANILLA}
 
 RECRUIT_URL = f"{WEB_SYNC_BASE}/api/internal/recruitments"
 EVENTS_URL = f"{WEB_SYNC_BASE}/api/internal/events"
@@ -69,11 +64,20 @@ class SiteSyncCog(commands.Cog):
 
     @tasks.loop(minutes=SYNC_INTERVAL_MINUTES)
     async def sync_site(self):
-        """募集とイベントを集めて、サイトへ送る。
+        """決まった間隔で、サイトへ送る。"""
+        await self.sync_once()
+
+    async def sync_once(self):
+        """募集とイベントを集めて、サイトへ 1 回送る。
 
         片方が失敗しても、もう片方は送る。募集を読めない状態が続いたときに、
         イベントまでずっと古いままになる、ということを無くすため。
+
+        募集を締め切ったとき（cogs/recruitment.py）にも、次の回を待たずに呼ばれる。
         """
+        if self.session is None:
+            return  # 同期が設定されていない
+
         guild = self.get_guild()
         if guild is None:
             print("サーバーが見つからないので、サイトへ送れませんでした。")
