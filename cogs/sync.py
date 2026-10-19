@@ -3,38 +3,51 @@
 サイト側は Discord を叩かない。Bot が送った内容をそのまま持って表示するだけなので、
 Discord が重くてもサイトは止まらないし、サイトに Bot のトークンを置かなくて済む。
 
-送り先は次の 2 つ。どちらも合言葉（SYNC_SECRET）が合わないと 401、サイト側に
+送り先は次の 3 つ。どれも合言葉（SYNC_SECRET）が合わないと 401、サイト側に
 合言葉が無ければ 503 で断られる。
 
 - POST /api/internal/recruitments …… いま立っているマルチ募集
 - POST /api/internal/events …… これからのイベント
+- POST /api/internal/achievements …… 実績（誰が何を解放したか。マイページ用）
 
-どちらも「届いた内容で丸ごと入れ替え」なので、何度送っても同じ結果になる。
+どれも「届いた内容で丸ごと入れ替え」なので、何度送っても同じ結果になる。
+
+実績だけは、送る間隔をあける（ACHIEVEMENT_SYNC_MINUTES）。付与は手動でたまにしか
+起きないので、5 分ごとに送るとサイト側の書き込みを無駄に使うため。
 """
 
 import sys
+from datetime import datetime, timezone
 from functools import partial
 
 import aiohttp
 from discord.ext import commands, tasks
 
 from config import (
+    ACHIEVEMENT_ROLE_IDS,
+    ACHIEVEMENT_SYNC_MINUTES,
     GUILD_ID,
     RECRUIT_CHANNELS,
     SYNC_INTERVAL_MINUTES,
     SYNC_SECRET,
     WEB_SYNC_BASE,
 )
+from database import list_all_achievements
 from web_sync import (
+    achievement_master,
+    achievement_members,
+    build_achievements_payload,
     build_events_payload,
     build_payload,
     collect_events,
     collect_recruitments,
+    is_achievements_due,
     run_each,
 )
 
 RECRUIT_URL = f"{WEB_SYNC_BASE}/api/internal/recruitments"
 EVENTS_URL = f"{WEB_SYNC_BASE}/api/internal/events"
+ACHIEVEMENTS_URL = f"{WEB_SYNC_BASE}/api/internal/achievements"
 
 
 class SiteSyncCog(commands.Cog):
@@ -43,6 +56,8 @@ class SiteSyncCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self.session: aiohttp.ClientSession | None = None
+        # 最後に実績を送った時刻（送りすぎないため）
+        self.last_achievements_at: datetime | None = None
 
     async def cog_load(self):
         # Render では print が溜められて見えなくなるので、行ごとに出すようにする
@@ -68,7 +83,7 @@ class SiteSyncCog(commands.Cog):
         await self.sync_once()
 
     async def sync_once(self):
-        """募集とイベントを集めて、サイトへ 1 回送る。
+        """募集とイベント（と、その番なら実績）を集めて、サイトへ 1 回送る。
 
         片方が失敗しても、もう片方は送る。募集を読めない状態が続いたときに、
         イベントまでずっと古いままになる、ということを無くすため。
@@ -83,11 +98,19 @@ class SiteSyncCog(commands.Cog):
             print("サーバーが見つからないので、サイトへ送れませんでした。")
             return
 
+        jobs = [
+            ("募集", partial(self.sync_recruitments, guild)),
+            ("イベント", partial(self.sync_events, guild)),
+        ]
+
+        # 実績は、そう頻繁には変わらない。書き込みを無駄に増やさないよう、間隔をあけて送る。
+        now = datetime.now(timezone.utc)
+        if is_achievements_due(self.last_achievements_at, now, ACHIEVEMENT_SYNC_MINUTES):
+            self.last_achievements_at = now
+            jobs.append(("実績", partial(self.sync_achievements, guild)))
+
         await run_each(
-            (
-                ("募集", partial(self.sync_recruitments, guild)),
-                ("イベント", partial(self.sync_events, guild)),
-            ),
+            tuple(jobs),
             lambda label, error: print(f"{label}の同期でエラーが起きました: {error}"),
         )
 
@@ -107,6 +130,38 @@ class SiteSyncCog(commands.Cog):
         items = await collect_events(guild)
         await self.send(
             EVENTS_URL, build_events_payload(guild.id, items), f"イベント {len(items)} 件"
+        )
+
+    async def sync_achievements(self, guild):
+        """実績（誰が何を解放したか）を送る。マイページに出すための写し。
+
+        解放済みの持ち主は Redis にしか無い（Discord のロールに出るのは、いまつけて
+        いる称号 1 つだけ）。称号は Discord 側から今の状態を読む。
+        """
+        role_names = {
+            role_id: role.name
+            for role_id in ACHIEVEMENT_ROLE_IDS
+            if (role := guild.get_role(role_id)) is not None
+        }
+        unlocked_by_user = list_all_achievements()
+
+        title_by_user = {}
+        for user_id in unlocked_by_user:
+            member = guild.get_member(user_id)
+            if member is None:
+                continue  # サーバーから出た人など。解放済みだけ送る
+            title_by_user[user_id] = next(
+                (role.id for role in member.roles if role.id in ACHIEVEMENT_ROLE_IDS),
+                None,
+            )
+
+        achievements = achievement_master(ACHIEVEMENT_ROLE_IDS, role_names)
+        members = achievement_members(unlocked_by_user, title_by_user)
+
+        await self.send(
+            ACHIEVEMENTS_URL,
+            build_achievements_payload(guild.id, achievements, members),
+            f"実績 {len(achievements)} 件 / {len(members)} 人",
         )
 
     async def send(self, url, payload, label):

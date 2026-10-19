@@ -5,13 +5,16 @@
 （cogs/recruitment.py の `/recruit_list`）も、ここで作った値をそのまま並べるだけにして、
 「いつ流れるか」の数え方が 2 か所に分かれないようにしている。
 
-いま送っているのは 2 つ。
+いま送っているのは 3 つ。
 
 - マルチ募集…… Discord では「メッセージ＋スレッド」で、最後の書き込みから 24 時間で
   自動的に流れる。サイトはその写しを持ち、いま立っているものだけを出す。まだ生きている
   募集か分かるように、最後の書き込みの時刻と、書き込みの数も送る。
 - イベント…… Discord の「イベント」（サーバーの予定）。終わったものは
   Discord が返さなくなるので、終了の同期はしない。
+- 実績…… Discord の「実績ロール」。解放済みは Discord のロールには出ない（ロールは、
+  いまつけている称号 1 つだけ）ので、サイトのマイページには bot から写すしかない。
+  付与は手動でたまにしか起きないので、送る間隔は長めにする（cogs/sync.py）。
 """
 
 import logging
@@ -289,3 +292,62 @@ async def collect_events(guild) -> list[dict]:
 def build_events_payload(guild_id, items: list[dict]) -> dict:
     """イベントを、サイトへ送る形にする。"""
     return {"guildId": str(guild_id), "events": items}
+
+
+def achievement_master(role_ids, role_names: dict) -> list[dict]:
+    """実績の一覧を、サイトへ送る形にする。
+
+    名前は Discord のロール名をそのまま使う（説明やカテゴリは Discord 側にも無い）。
+    名前が引けないロール（消されたもの）は送らない。順番は role_ids のとおり。
+    """
+    return [
+        {"id": str(role_id), "name": str(role_names[role_id])}
+        for role_id in role_ids
+        if role_id in role_names
+    ]
+
+
+def achievement_member(user_id, unlocked, title=None) -> dict:
+    """1 人分を、サイトへ送る形にする。
+
+    unlocked は解放済みのロール ID の集まり。並べ方は決めておく（送る内容が毎回同じに
+    なるので、変わっていないかを目で見て分かる）。
+    """
+    return {
+        "userId": str(user_id),
+        "unlocked": sorted(str(role_id) for role_id in unlocked),
+        "title": str(title) if title else "",
+    }
+
+
+def achievement_members(unlocked_by_user: dict, title_by_user: dict) -> list[dict]:
+    """人ごとの実績を、サイトへ送る形にする（ユーザー ID の順）。
+
+    unlocked_by_user は ユーザー ID → 解放済みのロール ID。title_by_user は
+    ユーザー ID → いまつけている称号（つけていなければ、入っていない）。
+    """
+    return [
+        achievement_member(user_id, unlocked_by_user[user_id], title_by_user.get(user_id))
+        for user_id in sorted(unlocked_by_user)
+    ]
+
+
+def build_achievements_payload(guild_id, achievements: list[dict], members: list[dict]) -> dict:
+    """実績を、サイトへ送る形にする。"""
+    return {
+        "guildId": str(guild_id),
+        "achievements": achievements,
+        "members": members,
+    }
+
+
+def is_achievements_due(last_sent_at, now, minutes: int) -> bool:
+    """実績を送る番か。一度も送っていなければ、すぐ送る。
+
+    実績の付与は手動でたまにしか起きない。5 分ごとに送ると、D1 の無料枠（1 日の書き込み
+    行数）を無駄に使うので、間隔をあけて送る。
+    """
+    if last_sent_at is None:
+        return True
+
+    return (now - last_sent_at).total_seconds() >= minutes * 60

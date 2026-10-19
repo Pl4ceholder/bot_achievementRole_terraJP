@@ -11,6 +11,38 @@ def get_user_achievements(user_id: int) -> list[int]:
     return [int(rid) for rid in role_ids]
 
 
+def list_all_achievements() -> dict[int, list[int]]:
+    """全員ぶんの解放済み実績（ユーザーID → ロールIDのリスト）。
+
+    Redis にはユーザーの一覧が無いので、キーの形（user:*:achievements）を拾って回る。
+    実績の付与は手動でたまにしか起きないので、この走査で足りる。壊れた値は飛ばして、
+    1 件のせいで同期が止まらないようにする。
+    """
+    found = {}
+
+    for key in r.scan_iter(match="user:*:achievements", count=100):
+        parts = str(key).split(":")
+        if len(parts) != 3:
+            continue
+
+        try:
+            user_id = int(parts[1])
+        except ValueError:
+            continue
+
+        role_ids = []
+        for role_id in r.smembers(key):
+            try:
+                role_ids.append(int(role_id))
+            except (TypeError, ValueError):
+                continue
+
+        if role_ids:
+            found[user_id] = role_ids
+
+    return found
+
+
 def grant_achievement(user_id: int, role_id: int):
     """ユーザーに実績を解放（DBに追加）"""
     r.sadd(f"user:{user_id}:achievements", role_id)

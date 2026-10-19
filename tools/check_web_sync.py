@@ -11,6 +11,8 @@
 - 募集が流れる時刻を求められるか（Discord の一覧と、サイトの表示に使う）
 - 流れるまでの残りを文にできるか
 - Discord の時刻表示（`<t:...>`）に使う秒を取り出せるか
+- 実績を、送る形にできるか（消えたロールを送らない・並べ方が決まっている）
+- 実績を送る間隔を守れるか（サイト側の書き込みを無駄に使わない）
 
 このファイルは discord も aiohttp も使わない（標準ライブラリだけ）。Bot のトークンが
 無くても動くので、送る形が合っているかを手元で確かめられる。
@@ -27,11 +29,12 @@ import json
 import os
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import (  # noqa: E402
+    ACHIEVEMENT_ROLE_IDS,
     CHANNEL_CONSOLE,
     CHANNEL_TMOD,
     CHANNEL_VANILLA,
@@ -39,11 +42,15 @@ from config import (  # noqa: E402
 )
 from web_sync import (  # noqa: E402
     DISCORD_EPOCH_MS,
+    achievement_master,
+    achievement_members,
+    build_achievements_payload,
     build_events_payload,
     build_payload,
     collect_events,
     collect_recruitments,
     deadline_of,
+    is_achievements_due,
     remaining_text,
     run_each,
     snowflake_time,
@@ -387,6 +394,42 @@ def check_unix() -> bool:
     return to_unix("2026-10-19T03:20:00Z") == int(moment.timestamp()) and to_unix("") == 0
 
 
+def check_achievements() -> bool:
+    """実績を、サイトへ送る形にできるか。
+
+    名前が引けないロール（消されたもの）は送らない。並べ方は決めておく（同じ内容なら
+    送る形も同じになるので、変わったかどうかが分かる）。
+    """
+    known = {10: "A", 20: "B", 30: "C"}
+
+    master = achievement_master([10, 20, 30, 40], known)
+    members = achievement_members(
+        {200: [30, 10], 100: [10], 300: []},
+        {200: 30, 100: None},
+    )
+
+    return master == [
+        {"id": "10", "name": "A"},
+        {"id": "20", "name": "B"},
+        {"id": "30", "name": "C"},
+    ] and members == [
+        {"userId": "100", "unlocked": ["10"], "title": ""},
+        {"userId": "200", "unlocked": ["10", "30"], "title": "30"},
+        {"userId": "300", "unlocked": [], "title": ""},
+    ]
+
+
+def check_achievements_due() -> bool:
+    """実績を送る間隔（送りすぎで、サイト側の書き込みを無駄に使わないか）。"""
+    now = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
+
+    return (
+        is_achievements_due(None, now, 30)  # 一度も送っていない
+        and not is_achievements_due(now - timedelta(minutes=29), now, 30)
+        and is_achievements_due(now - timedelta(minutes=30), now, 30)
+    )
+
+
 async def main() -> None:
     guild = sample_guild()
     channel_ids = {CHANNEL_TMOD, CHANNEL_CONSOLE, CHANNEL_VANILLA}
@@ -403,10 +446,27 @@ async def main() -> None:
     print(f"イベント {len(guild._events)} 件のうち、これから {len(events)} 件を送ります。")
     print(json.dumps(event_payload, ensure_ascii=False, indent=2))
 
+    # 実績は、集めるところが Discord と Redis に触る（cogs/sync.py の sync_achievements）。
+    # ここでは、送る形が合っているかを見るための見本を作る。
+    role_names = {role_id: f"実績{index + 1}" for index, role_id in enumerate(ACHIEVEMENT_ROLE_IDS)}
+    achievements = achievement_master(ACHIEVEMENT_ROLE_IDS, role_names)
+    members = achievement_members(
+        {
+            1000000000000000001: [ACHIEVEMENT_ROLE_IDS[0], ACHIEVEMENT_ROLE_IDS[2]],
+            1000000000000000002: [ACHIEVEMENT_ROLE_IDS[1]],
+        },
+        {1000000000000000001: ACHIEVEMENT_ROLE_IDS[2]},
+    )
+    achievement_payload = build_achievements_payload(guild.id, achievements, members)
+    print()
+    print(f"実績 {len(achievements)} 件 / {len(members)} 人を送ります。")
+    print(json.dumps(achievement_payload, ensure_ascii=False, indent=2))
+
     if "--post" in sys.argv:
         print()
         post("/api/internal/recruitments", recruit_payload)
         post("/api/internal/events", event_payload)
+        post("/api/internal/achievements", achievement_payload)
 
     print()
     checks = (
@@ -415,6 +475,8 @@ async def main() -> None:
         ("募集が流れる時刻を求められる（書き込みで延びる）", check_deadline()),
         ("流れるまでの残りを文にできる", check_remaining()),
         ("Discord の時刻表示に使う秒を取り出せる", check_unix()),
+        ("実績を、送る形にできる", check_achievements()),
+        ("実績を送る間隔を守れる", check_achievements_due()),
     )
     for title, ok in checks:
         print(("OK   " if ok else "ダメ  ") + title)

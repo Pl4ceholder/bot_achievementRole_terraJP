@@ -70,3 +70,10 @@ try:
     SYNC_INTERVAL_MINUTES = max(1, int(os.getenv("SYNC_INTERVAL_MINUTES", "5")))
 except ValueError:
     SYNC_INTERVAL_MINUTES = 5
+
+# 実績を送る間隔（分）。実績の付与は手動でたまにしか起きないので、募集やイベントより
+# 長くする。5 分ごとに送ると、サイト側（D1）の書き込みを無駄に使うため。
+try:
+    ACHIEVEMENT_SYNC_MINUTES = max(1, int(os.getenv("ACHIEVEMENT_SYNC_MINUTES", "30")))
+except ValueError:
+    ACHIEVEMENT_SYNC_MINUTES = 30
