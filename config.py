@@ -49,3 +49,19 @@ VC_CHANNEL_IDS = {
     "CSVC4": None,
     "CSVC5": None,
 }
+
+# --- サイト（Terraria JP 公式サイト）との同期 ---
+# サイト側は Discord を叩かない。Bot が集めた内容を、ここへ送って写してもらう。
+# Render の Environment に WEB_SYNC_URL と SYNC_SECRET を入れると動き出す。
+# SYNC_SECRET はサイト側（npx wrangler secret put SYNC_SECRET）と同じ文字列にすること。
+WEB_SYNC_URL = os.getenv(
+    "WEB_SYNC_URL",
+    "https://terraria-jp.terraria-jp-website.workers.dev/api/internal/recruitments",
+)
+SYNC_SECRET = os.getenv("SYNC_SECRET")
+
+# 何分ごとに送るか。短くしすぎても Discord を叩きすぎるだけなので、1 分未満にはしない。
+try:
+    SYNC_INTERVAL_MINUTES = max(1, int(os.getenv("SYNC_INTERVAL_MINUTES", "5")))
+except ValueError:
+    SYNC_INTERVAL_MINUTES = 5
