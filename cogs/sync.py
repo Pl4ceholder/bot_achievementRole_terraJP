@@ -12,6 +12,8 @@ Discord が重くてもサイトは止まらないし、サイトに Bot のト�
 どちらも「届いた内容で丸ごと入れ替え」なので、何度送っても同じ結果になる。
 """
 
+import sys
+
 import aiohttp
 from discord.ext import commands, tasks
 
@@ -46,6 +48,10 @@ class SiteSyncCog(commands.Cog):
         self.session: aiohttp.ClientSession | None = None
 
     async def cog_load(self):
+        # Render では print が溜められて見えなくなるので、行ごとに出すようにする
+        # （これが無いと、動いているのにログが出ずに原因が分からなくなる）
+        sys.stdout.reconfigure(line_buffering=True)
+
         if not SYNC_SECRET:
             print("サイトとの同期は設定されていないので動かしません（SYNC_SECRET）。")
             return

@@ -119,13 +119,17 @@ class FakeEvent:
 
 
 class FakeGuild:
+    """`active_threads` は本物も await が要る（非同期）。ここを同期にすると、
+    本番でだけ落ちる間違いを素通りさせてしまうので、形は必ず本物に合わせる。
+    """
+
     def __init__(self, guild_id, threads, channels, events):
         self.id = guild_id
         self._threads = threads
         self._channels = channels
         self._events = events
 
-    def active_threads(self):
+    async def active_threads(self):
         return list(self._threads)
 
     def get_channel(self, channel_id):
@@ -243,7 +247,8 @@ async def main() -> None:
 
     recruitments = await collect_recruitments(guild, channel_ids)
     recruit_payload = build_payload(guild.id, recruitments)
-    print(f"スレッド {len(guild.active_threads())} 本のうち、募集 {len(recruitments)} 件を送ります。")
+    threads = await guild.active_threads()
+    print(f"スレッド {len(threads)} 本のうち、募集 {len(recruitments)} 件を送ります。")
     print(json.dumps(recruit_payload, ensure_ascii=False, indent=2))
 
     events = await collect_events(guild)

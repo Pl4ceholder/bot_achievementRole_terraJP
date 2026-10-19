@@ -90,8 +90,14 @@ async def fetch_starter_message(thread):
 
 
 async def collect_recruitments(guild, channel_ids) -> list[dict]:
-    """いま立っている募集を集める（新しい順）。"""
-    threads = [thread for thread in guild.active_threads() if thread.parent_id in channel_ids]
+    """いま立っている募集を集める（新しい順）。
+
+    `guild.active_threads()` は discord.py では await が要る（取りに行く）ので、
+    ここも await する。取りこぼさないよう、キャッシュではなく Discord に聞く。
+    """
+    threads = [
+        thread for thread in await guild.active_threads() if thread.parent_id in channel_ids
+    ]
     threads.sort(key=lambda thread: thread.created_at, reverse=True)
 
     items = []
