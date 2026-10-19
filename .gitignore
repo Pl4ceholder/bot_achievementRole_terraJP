@@ -1,0 +1,6 @@
+# Python が自動で作るもの
+__pycache__/
+*.pyc
+
+# 秘密の値（トークン・合言葉など）。Render の Environment に入れるので、ファイルには置かない。
+.env
