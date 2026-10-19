@@ -3,6 +3,9 @@
     python tools/check_web_sync.py            # 送る中身を表示するだけ
     python tools/check_web_sync.py --post     # サイトへ実際に送る
 
+送る中身（募集・イベント）を表示したうえで、最後に「片方の同期が失敗しても、もう片方は
+行われるか」も確かめる。合っていなければ終了コード 1 で終わる。
+
 このファイルは discord も aiohttp も使わない（標準ライブラリだけ）。Bot のトークンが
 無くても動くので、送る形が合っているかを手元で確かめられる。
 
@@ -33,6 +36,7 @@ from web_sync import (  # noqa: E402
     build_payload,
     collect_events,
     collect_recruitments,
+    run_each,
 )
 
 # 確認用のダミー。Discord のオブジェクトと同じ形（使う属性だけ）にしている。
@@ -262,6 +266,32 @@ def post(path: str, payload: dict) -> None:
         print(response.read().decode("utf-8"))
 
 
+async def check_run_each() -> bool:
+    """片方の同期が失敗しても、もう片方は行われるか。
+
+    募集を読めない状態が続くと、イベントまでずっと古いままになってしまう。それを
+    防ぐための規則なので、ここで確かめる。
+    """
+    done = []
+    errors = []
+
+    async def fail():
+        raise RuntimeError("わざと失敗")
+
+    async def succeed():
+        done.append("イベント")
+
+    try:
+        await run_each(
+            (("募集", fail), ("イベント", succeed)),
+            lambda label, error: errors.append(f"{label}: {error}"),
+        )
+    except Exception as error:  # 規則が壊れていると、ここまで例外が上がってくる
+        errors.append(f"例外がそのまま出た: {error}")
+
+    return done == ["イベント"] and errors == ["募集: わざと失敗"]
+
+
 async def main() -> None:
     guild = sample_guild()
     channel_ids = {CHANNEL_TMOD, CHANNEL_CONSOLE, CHANNEL_VANILLA}
@@ -282,6 +312,13 @@ async def main() -> None:
         print()
         post("/api/internal/recruitments", recruit_payload)
         post("/api/internal/events", event_payload)
+
+    print()
+    if await check_run_each():
+        print("OK   片方の同期が失敗しても、もう片方は行われる")
+    else:
+        print("ダメ  片方の同期が失敗すると、もう片方が行われない")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

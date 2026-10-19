@@ -128,6 +128,19 @@ async def collect_recruitments(guild, channel_ids) -> list[dict]:
     return items
 
 
+async def run_each(jobs, on_error) -> None:
+    """複数の同期を、片方が失敗しても続けて行う。
+
+    募集を読めない状態が続いたときに、イベントまでずっと古いままになる、という
+    ことを無くすため。失敗は on_error（見出し, 例外）に渡して、次へ進む。
+    """
+    for label, job in jobs:
+        try:
+            await job()
+        except Exception as error:  # 片方の失敗で、もう片方を落とさない
+            on_error(label, error)
+
+
 def build_payload(guild_id, items: list[dict]) -> dict:
     """募集を、サイトへ送る形にする。"""
     return {"guildId": str(guild_id), "recruitments": items}

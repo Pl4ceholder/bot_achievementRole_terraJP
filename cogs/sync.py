@@ -13,6 +13,7 @@ Discord が重くてもサイトは止まらないし、サイトに Bot のト�
 """
 
 import sys
+from functools import partial
 
 import aiohttp
 from discord.ext import commands, tasks
@@ -31,6 +32,7 @@ from web_sync import (
     build_payload,
     collect_events,
     collect_recruitments,
+    run_each,
 )
 
 # 募集が立つチャンネル（cogs/recruitment.py と同じ）
@@ -67,14 +69,23 @@ class SiteSyncCog(commands.Cog):
 
     @tasks.loop(minutes=SYNC_INTERVAL_MINUTES)
     async def sync_site(self):
-        """募集とイベントを集めて、サイトへ送る。"""
+        """募集とイベントを集めて、サイトへ送る。
+
+        片方が失敗しても、もう片方は送る。募集を読めない状態が続いたときに、
+        イベントまでずっと古いままになる、ということを無くすため。
+        """
         guild = self.get_guild()
         if guild is None:
             print("サーバーが見つからないので、サイトへ送れませんでした。")
             return
 
-        await self.sync_recruitments(guild)
-        await self.sync_events(guild)
+        await run_each(
+            (
+                ("募集", partial(self.sync_recruitments, guild)),
+                ("イベント", partial(self.sync_events, guild)),
+            ),
+            lambda label, error: print(f"{label}の同期でエラーが起きました: {error}"),
+        )
 
     def get_guild(self):
         """送り先のサーバー。まだ準備できていなければ None。"""
