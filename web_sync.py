@@ -80,10 +80,22 @@ def build_item(*, thread, message, guild, created_at) -> dict:
     }
 
 
-async def fetch_starter_message(thread):
-    """スレッドの元になった募集メッセージを取る（スレッド ID ＝ 元メッセージ ID）。"""
+async def fetch_starter_message(thread, guild=None):
+    """スレッドの元になった募集メッセージを取る。
+
+    募集のスレッドは「チャンネルへ送ったメッセージ」から作られているので、元メッセージは
+    スレッドの中ではなく親チャンネルにある。スレッドから取ろうとすると 404（Unknown
+    Message）になるため、親チャンネルから取る。
+    """
+    parent = getattr(thread, "parent", None)
+    if parent is None and guild is not None:
+        parent = guild.get_channel(thread.parent_id)
+    if parent is None:
+        logger.warning("募集の親チャンネルが分かりませんでした: %s", thread.id)
+        return None
+
     try:
-        return await thread.fetch_message(thread.id)
+        return await parent.fetch_message(thread.id)
     except Exception as error:  # 1 本読めなくても、他の募集は送る
         logger.warning("募集メッセージを読めませんでした: %s (%s)", thread.id, error)
         return None
@@ -102,7 +114,7 @@ async def collect_recruitments(guild, channel_ids) -> list[dict]:
 
     items = []
     for thread in threads:
-        message = await fetch_starter_message(thread)
+        message = await fetch_starter_message(thread, guild)
         if message is None or not message.embeds:
             continue
         items.append(

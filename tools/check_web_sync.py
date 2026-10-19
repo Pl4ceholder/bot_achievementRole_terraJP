@@ -69,20 +69,32 @@ class FakeMessage:
         self.author = author
 
 
-class FakeThread:
-    def __init__(self, thread_id, parent_id, created_at, message):
-        self.id = thread_id
-        self.parent_id = parent_id
-        self.created_at = created_at
-        self._message = message
+class FakeChannel:
+    """チャンネル。募集の元メッセージはここ（親チャンネル）に置く。
+
+    本物と同じで、元メッセージはスレッドからは取れない（スレッド側から取ると 404 に
+    なる）。ここを取り違えると本番でだけ落ちるので、ダミーも同じ形にしている。
+    """
+
+    def __init__(self, channel_id=0, name=""):
+        self.id = channel_id
+        self.name = name
+        self.message = None
 
     async def fetch_message(self, message_id):
-        return self._message
+        if self.message is None or self.message.id != message_id:
+            raise LookupError("Unknown Message")  # 本物では 404 になるところ
+        return self.message
 
 
-class FakeChannel:
-    def __init__(self, name):
-        self.name = name
+class FakeThread:
+    """`fetch_message` はあえて持たせない（スレッドから元メッセージは取れない）。"""
+
+    def __init__(self, thread_id, parent, created_at):
+        self.id = thread_id
+        self.parent = parent
+        self.parent_id = parent.id
+        self.created_at = created_at
 
 
 class FakeStatus:
@@ -139,18 +151,23 @@ class FakeGuild:
         return list(self._events)
 
 
-def make_thread(*, thread_id, channel_id, created_at, name, fields):
+def make_thread(*, thread_id, channel, created_at, name, fields):
+    """募集のスレッドを作る。元メッセージは親チャンネルに置く（本物と同じ）。"""
     author = FakeUser(user_id=thread_id + 1000, display_name=name)
     embed = FakeEmbed(fields, FakeAuthor(name=name, icon_url="https://example.com/i.png"))
-    message = FakeMessage(message_id=thread_id, embed=embed, author=author)
-    return FakeThread(thread_id, channel_id, created_at, message)
+    channel.message = FakeMessage(message_id=thread_id, embed=embed, author=author)
+    return FakeThread(thread_id, channel, created_at)
 
 
 def sample_guild() -> FakeGuild:
     """実際の embed（cogs/recruitment.py）と同じ見出しで作る。"""
+    vanilla_channel = FakeChannel(CHANNEL_VANILLA, "バニラマルチ")
+    tmod_channel = FakeChannel(CHANNEL_TMOD, "tmodマルチ")
+    decoy_channel = FakeChannel(9999999999999999999, "雑談")
+
     vanilla = make_thread(
         thread_id=1111222233334444551,
-        channel_id=CHANNEL_VANILLA,
+        channel=vanilla_channel,
         created_at=datetime(2026, 10, 19, 3, 0, tzinfo=timezone.utc),
         name="テスト太郎",
         fields=[
@@ -163,7 +180,7 @@ def sample_guild() -> FakeGuild:
     )
     tmod = make_thread(
         thread_id=1111222233334444552,
-        channel_id=CHANNEL_TMOD,
+        channel=tmod_channel,
         created_at=datetime(2026, 10, 18, 12, 30, tzinfo=timezone.utc),
         name="テスト花子",
         fields=[
@@ -177,7 +194,7 @@ def sample_guild() -> FakeGuild:
     # 募集のチャンネルではないところに立ったスレッド。送ってはいけない。
     decoy = make_thread(
         thread_id=1111222233334444553,
-        channel_id=9999999999999999999,
+        channel=decoy_channel,
         created_at=datetime(2026, 10, 19, 9, 0, tzinfo=timezone.utc),
         name="雑談",
         fields=[("🎮 種類", "これは送られないはず")],
@@ -200,7 +217,7 @@ def sample_guild() -> FakeGuild:
             event_id=2222333344445555667,
             name="まったり雑談",
             start_time=datetime(2026, 10, 20, 11, 0, tzinfo=timezone.utc),
-            channel=FakeChannel("バニラVC1"),
+            channel=FakeChannel(1543549627553546350, "バニラVC1"),
         ),
         # 終わったイベント。送ってはいけない。
         FakeEvent(
@@ -211,7 +228,11 @@ def sample_guild() -> FakeGuild:
         ),
     ]
 
-    channels = {1543549627553546350: FakeChannel("バニラVC1")}
+    channels = {
+        CHANNEL_VANILLA: vanilla_channel,
+        CHANNEL_TMOD: tmod_channel,
+        1543549627553546350: FakeChannel(1543549627553546350, "バニラVC1"),  # VC 名の解決用
+    }
     return FakeGuild(
         guild_id=999000111222333444,
         threads=[decoy, vanilla, tmod],
