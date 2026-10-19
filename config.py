@@ -52,11 +52,12 @@ VC_CHANNEL_IDS = {
 
 # --- サイト（Terraria JP 公式サイト）との同期 ---
 # サイト側は Discord を叩かない。Bot が集めた内容を、ここへ送って写してもらう。
-# Render の Environment に WEB_SYNC_URL と SYNC_SECRET を入れると動き出す。
+# Render の Environment に SYNC_SECRET を入れると動き出す。
 # SYNC_SECRET はサイト側（npx wrangler secret put SYNC_SECRET）と同じ文字列にすること。
-WEB_SYNC_URL = os.getenv(
-    "WEB_SYNC_URL",
-    "https://terraria-jp.terraria-jp-website.workers.dev/api/internal/recruitments",
+# 送り先は WEB_SYNC_BASE の下（/api/internal/...）。ふつうは変えなくてよい。
+WEB_SYNC_BASE = os.getenv(
+    "WEB_SYNC_BASE",
+    "https://terraria-jp.terraria-jp-website.workers.dev",
 )
 SYNC_SECRET = os.getenv("SYNC_SECRET")
 

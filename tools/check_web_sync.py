@@ -6,9 +6,9 @@
 このファイルは discord も aiohttp も使わない（標準ライブラリだけ）。Bot のトークンが
 無くても動くので、送る形が合っているかを手元で確かめられる。
 
---post は環境変数 WEB_SYNC_URL / SYNC_SECRET を使う。ローカルのサイトへ送るときは:
+--post は環境変数 WEB_SYNC_BASE / SYNC_SECRET を使う。ローカルのサイトへ送るときは:
 
-    set WEB_SYNC_URL=http://127.0.0.1:8787/api/internal/recruitments
+    set WEB_SYNC_BASE=http://127.0.0.1:8787
     set SYNC_SECRET=（.dev.vars と同じ文字列）
     python tools/check_web_sync.py --post
 """
@@ -22,8 +22,18 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import CHANNEL_CONSOLE, CHANNEL_TMOD, CHANNEL_VANILLA  # noqa: E402
-from web_sync import build_payload, collect_recruitments  # noqa: E402
+from config import (  # noqa: E402
+    CHANNEL_CONSOLE,
+    CHANNEL_TMOD,
+    CHANNEL_VANILLA,
+    WEB_SYNC_BASE,
+)
+from web_sync import (  # noqa: E402
+    build_events_payload,
+    build_payload,
+    collect_events,
+    collect_recruitments,
+)
 
 # 確認用のダミー。Discord のオブジェクトと同じ形（使う属性だけ）にしている。
 
@@ -75,17 +85,54 @@ class FakeChannel:
         self.name = name
 
 
+class FakeStatus:
+    def __init__(self, name):
+        self.name = name
+
+
+class FakeEvent:
+    def __init__(
+        self,
+        *,
+        event_id,
+        name,
+        start_time,
+        description="",
+        end_time=None,
+        location=None,
+        channel=None,
+        url="",
+        user_count=0,
+        status="scheduled",
+    ):
+        self.id = event_id
+        self.name = name
+        self.description = description
+        self.start_time = start_time
+        self.end_time = end_time
+        self.location = location
+        self.channel = channel
+        self.cover_image = None
+        self.url = url
+        self.user_count = user_count
+        self.status = FakeStatus(status)
+
+
 class FakeGuild:
-    def __init__(self, guild_id, threads, channels):
+    def __init__(self, guild_id, threads, channels, events):
         self.id = guild_id
         self._threads = threads
         self._channels = channels
+        self._events = events
 
     def active_threads(self):
         return list(self._threads)
 
     def get_channel(self, channel_id):
         return self._channels.get(channel_id)
+
+    async def fetch_scheduled_events(self, with_counts=True):
+        return list(self._events)
 
 
 def make_thread(*, thread_id, channel_id, created_at, name, fields):
@@ -105,7 +152,7 @@ def sample_guild() -> FakeGuild:
         fields=[
             ("🎮 種類", "バニラマルチ"),
             ("💻 機種", "PC"),
-            ("🔊 VC", f"<#{1543549627553546350}>"),  # <#...> はチャンネル名に直す
+            ("🔊 VC", "<#1543549627553546350>"),  # <#...> はチャンネル名に直す
             ("🔗 SteamID / IP:Port", "123456789"),
             ("📝 メッセージ", "本日21:00〜 初心者歓迎！\n難易度エキスパートで遊びましょう"),
         ],
@@ -132,19 +179,51 @@ def sample_guild() -> FakeGuild:
         fields=[("🎮 種類", "これは送られないはず")],
     )
 
+    events = [
+        # 外部のイベント。場所は文字で入っている。
+        FakeEvent(
+            event_id=2222333344445555666,
+            name="第3回 建築コンテスト",
+            description="テーマは「雪の城」。\n締め切りは Discord で案内します。",
+            start_time=datetime(2026, 10, 25, 12, 0, tzinfo=timezone.utc),
+            end_time=datetime(2026, 10, 25, 14, 0, tzinfo=timezone.utc),
+            location="Discord の「イベント」を開いてね",
+            url="https://discord.com/events/999000111222333444/2222333344445555666",
+            user_count=7,
+        ),
+        # ボイスのイベント。場所はチャンネル名を使う。終わりの時刻は無い。
+        FakeEvent(
+            event_id=2222333344445555667,
+            name="まったり雑談",
+            start_time=datetime(2026, 10, 20, 11, 0, tzinfo=timezone.utc),
+            channel=FakeChannel("バニラVC1"),
+        ),
+        # 終わったイベント。送ってはいけない。
+        FakeEvent(
+            event_id=2222333344445555668,
+            name="終わったイベント",
+            start_time=datetime(2026, 10, 1, 11, 0, tzinfo=timezone.utc),
+            status="completed",
+        ),
+    ]
+
     channels = {1543549627553546350: FakeChannel("バニラVC1")}
-    return FakeGuild(guild_id=999000111222333444, threads=[decoy, vanilla, tmod], channels=channels)
+    return FakeGuild(
+        guild_id=999000111222333444,
+        threads=[decoy, vanilla, tmod],
+        channels=channels,
+        events=events,
+    )
 
 
-def post(payload: dict) -> None:
+def post(path: str, payload: dict) -> None:
     """サイトへ送る。"""
-    url = os.getenv("WEB_SYNC_URL")
     secret = os.getenv("SYNC_SECRET")
-
-    if not url or not secret:
-        print("WEB_SYNC_URL と SYNC_SECRET を環境変数に入れてから --post してください。")
+    if not secret:
+        print("SYNC_SECRET を環境変数に入れてから --post してください。")
         return
 
+    url = f"{WEB_SYNC_BASE}{path}"
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(
         url,
@@ -162,14 +241,21 @@ async def main() -> None:
     guild = sample_guild()
     channel_ids = {CHANNEL_TMOD, CHANNEL_CONSOLE, CHANNEL_VANILLA}
 
-    items = await collect_recruitments(guild, channel_ids)
-    payload = build_payload(guild.id, items)
+    recruitments = await collect_recruitments(guild, channel_ids)
+    recruit_payload = build_payload(guild.id, recruitments)
+    print(f"スレッド {len(guild.active_threads())} 本のうち、募集 {len(recruitments)} 件を送ります。")
+    print(json.dumps(recruit_payload, ensure_ascii=False, indent=2))
 
-    print(f"スレッド {len(guild.active_threads())} 本のうち、募集 {len(items)} 件を送ります。")
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    events = await collect_events(guild)
+    event_payload = build_events_payload(guild.id, events)
+    print()
+    print(f"イベント {len(guild._events)} 件のうち、これから {len(events)} 件を送ります。")
+    print(json.dumps(event_payload, ensure_ascii=False, indent=2))
 
     if "--post" in sys.argv:
-        post(payload)
+        print()
+        post("/api/internal/recruitments", recruit_payload)
+        post("/api/internal/events", event_payload)
 
 
 if __name__ == "__main__":

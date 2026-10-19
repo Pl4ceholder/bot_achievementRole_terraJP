@@ -3,8 +3,13 @@
 サイト側は Discord を叩かない。Bot が送った内容をそのまま持って表示するだけなので、
 Discord が重くてもサイトは止まらないし、サイトに Bot のトークンを置かなくて済む。
 
-送り先は `POST /api/internal/recruitments`。合言葉（SYNC_SECRET）が合わないと 401、
-サイト側に合言葉が無ければ 503 で断られる。
+送り先は次の 2 つ。どちらも合言葉（SYNC_SECRET）が合わないと 401、サイト側に
+合言葉が無ければ 503 で断られる。
+
+- POST /api/internal/recruitments …… いま立っているマルチ募集
+- POST /api/internal/events …… これからのイベント
+
+どちらも「届いた内容で丸ごと入れ替え」なので、何度送っても同じ結果になる。
 """
 
 import aiohttp
@@ -17,12 +22,20 @@ from config import (
     GUILD_ID,
     SYNC_INTERVAL_MINUTES,
     SYNC_SECRET,
-    WEB_SYNC_URL,
+    WEB_SYNC_BASE,
 )
-from web_sync import build_payload, collect_recruitments
+from web_sync import (
+    build_events_payload,
+    build_payload,
+    collect_events,
+    collect_recruitments,
+)
 
 # 募集が立つチャンネル（cogs/recruitment.py と同じ）
 RECRUIT_CHANNELS = {CHANNEL_TMOD, CHANNEL_CONSOLE, CHANNEL_VANILLA}
+
+RECRUIT_URL = f"{WEB_SYNC_BASE}/api/internal/recruitments"
+EVENTS_URL = f"{WEB_SYNC_BASE}/api/internal/events"
 
 
 class SiteSyncCog(commands.Cog):
@@ -33,57 +46,75 @@ class SiteSyncCog(commands.Cog):
         self.session: aiohttp.ClientSession | None = None
 
     async def cog_load(self):
-        if not WEB_SYNC_URL or not SYNC_SECRET:
-            print("サイトとの同期は設定されていないので動かしません（WEB_SYNC_URL / SYNC_SECRET）。")
+        if not SYNC_SECRET:
+            print("サイトとの同期は設定されていないので動かしません（SYNC_SECRET）。")
             return
         self.session = aiohttp.ClientSession()
-        self.sync_recruitments.start()
-        print(f"募集の同期を始めました（{SYNC_INTERVAL_MINUTES} 分ごと）。")
+        self.sync_site.start()
+        print(f"サイトへの同期を始めました（{SYNC_INTERVAL_MINUTES} 分ごと）。")
 
     async def cog_unload(self):
-        self.sync_recruitments.cancel()
+        self.sync_site.cancel()
         if self.session is not None:
             await self.session.close()
             self.session = None
 
     @tasks.loop(minutes=SYNC_INTERVAL_MINUTES)
-    async def sync_recruitments(self):
-        """いま立っている募集を集めて、サイトへ送る（丸ごと入れ替え）。"""
-        if not GUILD_ID:
-            return
-
-        guild = self.bot.get_guild(int(GUILD_ID))
+    async def sync_site(self):
+        """募集とイベントを集めて、サイトへ送る。"""
+        guild = self.get_guild()
         if guild is None:
-            print("サーバーが見つからないので、募集を送れませんでした。")
+            print("サーバーが見つからないので、サイトへ送れませんでした。")
             return
 
-        items = await collect_recruitments(guild, RECRUIT_CHANNELS)
+        await self.sync_recruitments(guild)
+        await self.sync_events(guild)
 
+    def get_guild(self):
+        """送り先のサーバー。まだ準備できていなければ None。"""
+        if not GUILD_ID:
+            return None
+        return self.bot.get_guild(int(GUILD_ID))
+
+    async def sync_recruitments(self, guild):
+        """いま立っている募集を送る。"""
+        items = await collect_recruitments(guild, RECRUIT_CHANNELS)
+        await self.send(RECRUIT_URL, build_payload(guild.id, items), f"募集 {len(items)} 件")
+
+    async def sync_events(self, guild):
+        """これからのイベントを送る。"""
+        items = await collect_events(guild)
+        await self.send(
+            EVENTS_URL, build_events_payload(guild.id, items), f"イベント {len(items)} 件"
+        )
+
+    async def send(self, url, payload, label):
+        """サイトへ送る。送れなくても、次の回にまた送ればよい。"""
         try:
             async with self.session.post(
-                WEB_SYNC_URL,
-                json=build_payload(guild.id, items),
+                url,
+                json=payload,
                 headers={"x-sync-secret": SYNC_SECRET},
                 timeout=aiohttp.ClientTimeout(total=20),
             ) as response:
                 status = response.status
                 body = await response.text()
-        except Exception as error:  # 送れなくても、次の回にまた送ればよい
-            print(f"募集を送れませんでした: {error}")
+        except Exception as error:
+            print(f"{label} を送れませんでした: {error}")
             return
 
         if status == 200:
-            print(f"募集を {len(items)} 件送りました。")
+            print(f"{label} を送りました。")
         else:
-            print(f"募集を送れませんでした（{status}）: {body[:200]}")
+            print(f"{label} を送れませんでした（{status}）: {body[:200]}")
 
-    @sync_recruitments.before_loop
-    async def before_sync_recruitments(self):
+    @sync_site.before_loop
+    async def before_sync_site(self):
         await self.bot.wait_until_ready()
 
-    @sync_recruitments.error
+    @sync_site.error
     async def on_sync_error(self, error: BaseException):
-        print(f"募集の同期でエラーが起きました: {error}")
+        print(f"サイトへの同期でエラーが起きました: {error}")
 
 
 async def setup(bot: commands.Bot):

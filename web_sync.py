@@ -3,8 +3,12 @@
 このファイルは discord を import しない。そのため Bot のトークンが無くても、
 `tools/check_web_sync.py` で中身を組み立てて確かめられる。
 
-いま送っているのはマルチ募集だけ。募集は Discord では「メッセージ＋スレッド」で、
-24 時間で自動的に流れる。サイトはその写しを持ち、いま立っているものだけを出す。
+いま送っているのは 2 つ。
+
+- マルチ募集…… Discord では「メッセージ＋スレッド」で、24 時間で自動的に流れる。
+  サイトはその写しを持ち、いま立っているものだけを出す。
+- イベント…… Discord の「イベント」（サーバーの予定）。終わったものは
+  Discord が返さなくなるので、終了の同期はしない。
 """
 
 import logging
@@ -107,5 +111,55 @@ async def collect_recruitments(guild, channel_ids) -> list[dict]:
 
 
 def build_payload(guild_id, items: list[dict]) -> dict:
-    """サイトへ送る形にする。"""
+    """募集を、サイトへ送る形にする。"""
     return {"guildId": str(guild_id), "recruitments": items}
+
+
+def event_location(event) -> str:
+    """場所を決める。外部のイベントは場所の名前、ボイスやステージはチャンネル名。"""
+    location = getattr(event, "location", None)
+    if location:
+        return str(location)
+
+    channel = getattr(event, "channel", None)
+    if channel is not None:
+        return str(getattr(channel, "name", "") or "")
+
+    return ""
+
+
+def is_upcoming_event(event) -> bool:
+    """これから、または開催中のイベントか。終わったもの・取り消されたものは送らない。"""
+    return getattr(event.status, "name", "") not in {"completed", "canceled"}
+
+
+def build_event(event) -> dict:
+    """Discord のイベント 1 件を、サイトへ送る 1 件分にする。"""
+    end_time = getattr(event, "end_time", None)
+    cover = getattr(event, "cover_image", None)
+
+    return {
+        "id": str(event.id),
+        "name": str(event.name or ""),
+        "description": str(event.description or ""),
+        "location": event_location(event),
+        "coverUrl": str(getattr(cover, "url", "") or ""),
+        "url": str(getattr(event, "url", "") or ""),
+        "userCount": int(getattr(event, "user_count", 0) or 0),
+        "startAt": to_iso(event.start_time),
+        "endAt": to_iso(end_time) if end_time else "",
+    }
+
+
+async def collect_events(guild) -> list[dict]:
+    """これからのイベントを集める（始まる順）。"""
+    events = await guild.fetch_scheduled_events(with_counts=False)
+
+    items = [build_event(event) for event in events if is_upcoming_event(event)]
+    items.sort(key=lambda item: item["startAt"])
+    return items
+
+
+def build_events_payload(guild_id, items: list[dict]) -> dict:
+    """イベントを、サイトへ送る形にする。"""
+    return {"guildId": str(guild_id), "events": items}
