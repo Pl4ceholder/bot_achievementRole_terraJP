@@ -32,11 +32,13 @@ from config import (  # noqa: E402
     WEB_SYNC_BASE,
 )
 from web_sync import (  # noqa: E402
+    DISCORD_EPOCH_MS,
     build_events_payload,
     build_payload,
     collect_events,
     collect_recruitments,
     run_each,
+    snowflake_time,
 )
 
 # 確認用のダミー。Discord のオブジェクトと同じ形（使う属性だけ）にしている。
@@ -94,11 +96,22 @@ class FakeChannel:
 class FakeThread:
     """`fetch_message` はあえて持たせない（スレッドから元メッセージは取れない）。"""
 
-    def __init__(self, thread_id, parent, created_at):
+    def __init__(
+        self,
+        thread_id,
+        parent,
+        created_at,
+        last_message_id=None,
+        message_count=0,
+        auto_archive_duration=1440,
+    ):
         self.id = thread_id
         self.parent = parent
         self.parent_id = parent.id
         self.created_at = created_at
+        self.last_message_id = last_message_id
+        self.message_count = message_count
+        self.auto_archive_duration = auto_archive_duration
 
 
 class FakeStatus:
@@ -155,12 +168,25 @@ class FakeGuild:
         return list(self._events)
 
 
-def make_thread(*, thread_id, channel, created_at, name, fields):
+def snowflake_for(moment: datetime) -> int:
+    """その時刻を表す Discord の ID を作る（本物と同じ計算）。"""
+    return (int(moment.timestamp() * 1000) - DISCORD_EPOCH_MS) << 22
+
+
+def make_thread(
+    *, thread_id, channel, created_at, name, fields, last_activity_at=None, message_count=6
+):
     """募集のスレッドを作る。元メッセージは親チャンネルに置く（本物と同じ）。"""
     author = FakeUser(user_id=thread_id + 1000, display_name=name)
     embed = FakeEmbed(fields, FakeAuthor(name=name, icon_url="https://example.com/i.png"))
     channel.message = FakeMessage(message_id=thread_id, embed=embed, author=author)
-    return FakeThread(thread_id, channel, created_at)
+    return FakeThread(
+        thread_id,
+        channel,
+        created_at,
+        last_message_id=snowflake_for(last_activity_at or created_at),
+        message_count=message_count,
+    )
 
 
 def sample_guild() -> FakeGuild:
@@ -173,6 +199,8 @@ def sample_guild() -> FakeGuild:
         thread_id=1111222233334444551,
         channel=vanilla_channel,
         created_at=datetime(2026, 10, 19, 3, 0, tzinfo=timezone.utc),
+        last_activity_at=datetime(2026, 10, 19, 3, 20, tzinfo=timezone.utc),
+        message_count=6,
         name="テスト太郎",
         fields=[
             ("🎮 種類", "バニラマルチ"),
@@ -186,6 +214,8 @@ def sample_guild() -> FakeGuild:
         thread_id=1111222233334444552,
         channel=tmod_channel,
         created_at=datetime(2026, 10, 18, 12, 30, tzinfo=timezone.utc),
+        last_activity_at=datetime(2026, 10, 19, 2, 0, tzinfo=timezone.utc),
+        message_count=12,
         name="テスト花子",
         fields=[
             ("🎮 種類", "モッドマルチ"),
@@ -292,6 +322,12 @@ async def check_run_each() -> bool:
     return done == ["イベント"] and errors == ["募集: わざと失敗"]
 
 
+def check_snowflake() -> bool:
+    """Discord の ID から、その時刻を取り出せるか（最後の書き込みの表示に使う）。"""
+    moment = datetime(2026, 10, 19, 3, 20, tzinfo=timezone.utc)
+    return snowflake_time(snowflake_for(moment)) == moment.isoformat().replace("+00:00", "Z")
+
+
 async def main() -> None:
     guild = sample_guild()
     channel_ids = {CHANNEL_TMOD, CHANNEL_CONSOLE, CHANNEL_VANILLA}
@@ -314,10 +350,14 @@ async def main() -> None:
         post("/api/internal/events", event_payload)
 
     print()
-    if await check_run_each():
-        print("OK   片方の同期が失敗しても、もう片方は行われる")
-    else:
-        print("ダメ  片方の同期が失敗すると、もう片方が行われない")
+    checks = (
+        ("片方の同期が失敗しても、もう片方は行われる", await check_run_each()),
+        ("ID から最後の書き込みの時刻を取り出せる", check_snowflake()),
+    )
+    for title, ok in checks:
+        print(("OK   " if ok else "ダメ  ") + title)
+
+    if not all(ok for _, ok in checks):
         raise SystemExit(1)
 
 

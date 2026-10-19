@@ -5,16 +5,20 @@
 
 いま送っているのは 2 つ。
 
-- マルチ募集…… Discord では「メッセージ＋スレッド」で、24 時間で自動的に流れる。
-  サイトはその写しを持ち、いま立っているものだけを出す。
+- マルチ募集…… Discord では「メッセージ＋スレッド」で、最後の書き込みから 24 時間で
+  自動的に流れる。サイトはその写しを持ち、いま立っているものだけを出す。まだ生きている
+  募集か分かるように、最後の書き込みの時刻と、書き込みの数も送る。
 - イベント…… Discord の「イベント」（サーバーの予定）。終わったものは
   Discord が返さなくなるので、終了の同期はしない。
 """
 
 import logging
-from datetime import timezone
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# Discord の ID に埋まっている時刻の基準（2015-01-01T00:00:00Z）
+DISCORD_EPOCH_MS = 1420070400000
 
 # 募集の embed の見出し（cogs/recruitment.py）を探すためのキーワード。
 # 絵文字や細かい文言が変わっても壊れないよう、絵文字を外した語で探す。
@@ -39,6 +43,30 @@ def to_iso(value) -> str:
         return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
     except (AttributeError, ValueError):
         return ""
+
+
+def to_int(value) -> int:
+    """数を取り出す（負や読めないものは 0）。"""
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def snowflake_time(snowflake) -> str:
+    """Discord の ID から、それが作られた時刻を取り出す（ISO 8601、UTC）。
+
+    ID の上位ビットが「2015-01-01 からのミリ秒」になっている。スレッドの最後の書き込みが
+    いつだったかを知るために使う。discord を import せずに計算できる。
+    """
+    value = to_int(snowflake)
+    if value <= 0:
+        return ""
+
+    moment = datetime.fromtimestamp(
+        ((value >> 22) + DISCORD_EPOCH_MS) / 1000, tz=timezone.utc
+    )
+    return moment.isoformat().replace("+00:00", "Z")
 
 
 def vc_name(guild, value: str) -> str:
@@ -77,6 +105,14 @@ def build_item(*, thread, message, guild, created_at) -> dict:
         "authorName": str(author_name),
         "authorIcon": str(author_icon),
         "startedAt": to_iso(created_at),
+        # 最後の書き込み。スレッドは、ここから auto_archive_duration 分で流れる。
+        # まだ書き込みが無ければ、立てた時刻と同じ。
+        "lastActivityAt": snowflake_time(getattr(thread, "last_message_id", None))
+        or to_iso(created_at),
+        # 書き込みの数（参加の目安。参加人数そのものではない）
+        "messageCount": to_int(getattr(thread, "message_count", 0)),
+        # Discord が「最後の書き込みから何分で流す」設定にしているか（普通は 1440 分）
+        "archiveMinutes": to_int(getattr(thread, "auto_archive_duration", 0)),
     }
 
 
