@@ -46,13 +46,6 @@ class RecruitModal(discord.ui.Modal, title="募集詳細の入力"):
         self.platform = platform
         self.vc = vc
 
-    connection_info = discord.ui.TextInput(
-        label="SteamID または IP:Port",
-        placeholder="例: 123456789 または 192.168.1.1:7777 (未定の場合は「なし」)",
-        required=False,
-        max_length=100,
-    )
-
     message = discord.ui.TextInput(
         label="メッセージ（時間・自由記入など）",
         style=discord.TextStyle.paragraph,
@@ -116,13 +109,6 @@ class RecruitModal(discord.ui.Modal, title="募集詳細の入力"):
         embed.add_field(name="🎮 種類", value=self.mode, inline=True)
         embed.add_field(name="💻 機種", value=self.platform, inline=True)
         embed.add_field(name="🔊 VC", value=vc_display, inline=True)
-
-        conn_val = (
-            self.connection_info.value if self.connection_info.value else "なし"
-        )
-        embed.add_field(
-            name="🔗 SteamID / IP:Port", value=conn_val, inline=False
-        )
         embed.add_field(
             name="📝 メッセージ", value=self.message.value, inline=False
         )

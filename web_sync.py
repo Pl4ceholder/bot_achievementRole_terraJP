@@ -34,7 +34,6 @@ DEFAULT_ARCHIVE_MINUTES = 1440
 KEY_MODE = "種類"
 KEY_PLATFORM = "機種"
 KEY_VC = "VC"
-KEY_CONNECTION = "SteamID"
 KEY_MESSAGE = "メッセージ"
 
 
@@ -161,7 +160,6 @@ def build_item(*, thread, message, guild, created_at) -> dict:
         "mode": find_field(fields, KEY_MODE).strip(),
         "platform": find_field(fields, KEY_PLATFORM).strip(),
         "vc": vc_name(guild, find_field(fields, KEY_VC).strip()),
-        "connection": find_field(fields, KEY_CONNECTION).strip(),
         "message": find_field(fields, KEY_MESSAGE).strip(),
         "authorId": str(getattr(message.author, "id", "") or ""),
         "authorName": str(author_name),

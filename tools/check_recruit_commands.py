@@ -181,7 +181,8 @@ async def check_list() -> bool:
         and "モッドマルチ / Switch" in text
         and f"https://discord.com/channels/{GUILD_ID}/1111222233334444551" in text
         and "書き込み 6 件" in text
-        and "あと" in text
+        # 残り時間は、確かめる時刻によって「あと…」にも「過ぎました」にもなる
+        and ("あと" in text or "流れる時刻を過ぎました" in text)
         and f"{WEB_SYNC_BASE}/recruit" in text
         and interaction.response.deferred is True  # 先に「考え中」を返しているか
     )
