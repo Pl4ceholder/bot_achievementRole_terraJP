@@ -377,6 +377,13 @@ def check_deadline() -> bool:
     return bumped == "2026-10-20T10:00:00Z" and unknown == "2026-10-19T12:00:00Z"
 
 
+def check_connection_not_sent(payload: dict) -> bool:
+    """募集の接続方法（SteamID / IP:Port）は、サイトへ送らない。"""
+    items = payload.get("recruitments", [])
+
+    return bool(items) and all("connection" not in item for item in items)
+
+
 def check_remaining() -> bool:
     """流れるまでの残りの言い方（Discord の一覧 `/recruit_list` に出る文）。"""
     now = datetime(2026, 10, 19, 12, 0, tzinfo=timezone.utc)
@@ -485,6 +492,7 @@ async def main() -> None:
         ("ID から最後の書き込みの時刻を取り出せる", check_snowflake()),
         ("募集が流れる時刻を求められる（書き込みで延びる）", check_deadline()),
         ("流れるまでの残りを文にできる", check_remaining()),
+        ("募集の接続方法は、サイトへ送らない", check_connection_not_sent(recruit_payload)),
         ("Discord の時刻表示に使う秒を取り出せる", check_unix()),
         ("実績を、送る形にできる", check_achievements()),
         ("実績を送る間隔を守れる", check_achievements_due()),
