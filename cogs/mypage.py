@@ -1,6 +1,6 @@
 import discord
 from discord.ext import commands
-from config import ACHIEVEMENT_ROLE_IDS
+from achievements import set_title
 from database import get_user_achievements
 
 
@@ -29,23 +29,26 @@ class TitleSelect(discord.ui.Select):
 
         await interaction.delete_original_response()
 
-        roles_to_remove = [
-            role for role in user.roles if role.id in ACHIEVEMENT_ROLE_IDS
-        ]
-        if roles_to_remove:
-            await user.remove_roles(*roles_to_remove)
+        role_id = None if selected_value == "none" else int(selected_value)
 
-        if selected_value != "none":
-            selected_role = interaction.guild.get_role(int(selected_value))
-            if selected_role:
-                await user.add_roles(selected_role)
-                await interaction.followup.send(
-                    f"称号を **{selected_role.name}** に変更しました！",
-                    ephemeral=True,
-                )
-                return
+        try:
+            await set_title(user, role_id)
+        except (discord.HTTPException, LookupError):
+            await interaction.followup.send(
+                "称号を変更できませんでした。時間をおいてお試しください。",
+                ephemeral=True,
+            )
+            return
 
-        await interaction.followup.send("称号を外しました。", ephemeral=True)
+        if role_id is None:
+            await interaction.followup.send("称号を外しました。", ephemeral=True)
+            return
+
+        role = interaction.guild.get_role(role_id)
+        await interaction.followup.send(
+            f"称号を **{role.name}** に変更しました！",
+            ephemeral=True,
+        )
 
 
 class TitleSelectView(discord.ui.View):

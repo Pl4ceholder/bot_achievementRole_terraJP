@@ -15,6 +15,7 @@
 """
 
 import asyncio
+import json
 import os
 import sys
 import types
@@ -38,6 +39,9 @@ class FakeResponse:
     async def text(self):
         return self._body
 
+    async def json(self, content_type=None):
+        return json.loads(self._body)
+
 
 class FakePost:
     """`async with session.post(...)` で使える形にする。"""
@@ -55,13 +59,24 @@ class FakePost:
 class FakeSession:
     def __init__(self):
         self.posts = []
+        self.gets = []
+        # get したときに返す本文（順番に使う。尽きたら空の依頼）
+        self.answers = []
 
     def post(self, url, json=None, headers=None, timeout=None):
         self.posts.append({"url": url, "payload": json, "headers": headers or {}})
         return FakePost(FakeResponse())
 
+    def get(self, url, headers=None, timeout=None):
+        self.gets.append({"url": url, "headers": headers or {}})
+        answer = self.answers.pop(0) if self.answers else {"ok": True, "requests": []}
+        return FakePost(FakeResponse(body=json.dumps(answer)))
+
     def sent(self, from_index=0):
         return [post["url"] for post in self.posts[from_index:]]
+
+    def posts_to(self, suffix):
+        return [post for post in self.posts if post["url"].endswith(suffix)]
 
 
 class FakeRole:
@@ -71,8 +86,9 @@ class FakeRole:
 
 
 class FakeMember:
-    def __init__(self, roles):
+    def __init__(self, roles, name="だれか"):
         self.roles = roles
+        self.display_name = name
 
 
 class FakeGuild:
@@ -106,8 +122,8 @@ def sample_guild() -> FakeGuild:
     """
     roles = [FakeRole(A1, "ビギナー"), FakeRole(A2, "ビルダー")]
     members = {
-        1001: FakeMember([FakeRole(A2, "ビルダー")]),
-        1002: FakeMember([FakeRole(555, "ふつうのロール")]),
+        1001: FakeMember([FakeRole(A2, "ビルダー")], "たろう"),
+        1002: FakeMember([FakeRole(555, "ふつうのロール")], "じろう"),
     }
     return FakeGuild(roles, members)
 
@@ -163,11 +179,97 @@ async def check_achievement_payload(original) -> bool:
             {"id": str(A2), "name": "ビルダー"},
         ],
         "members": [
-            {"userId": "1001", "unlocked": sorted([str(A1), str(A2)]), "title": str(A2)},
-            {"userId": "1002", "unlocked": [str(A1)], "title": ""},
-            {"userId": "1003", "unlocked": [str(A2)], "title": ""},
+            {
+                "userId": "1001",
+                "name": "たろう",
+                "unlocked": sorted([str(A1), str(A2)]),
+                "title": str(A2),
+            },
+            {"userId": "1002", "name": "じろう", "unlocked": [str(A1)], "title": ""},
+            {"userId": "1003", "name": "", "unlocked": [str(A2)], "title": ""},
         ],
     }
+
+
+def request_sample() -> dict:
+    """サイトが渡してくる依頼 1 件（形は /api/internal/requests と同じ）。"""
+    return {
+        "id": 7,
+        "kind": "title",
+        "action": "clear",
+        "userId": "1001",
+        "roleId": "",
+        "requestedAt": "2026-10-20T11:59:50Z",
+    }
+
+
+async def check_requests_applied(original) -> bool:
+    """サイトの依頼を拾って、結果を書き戻し、実績を送り直すか。"""
+    guild = sample_guild()
+    cog, _ = make_cog(guild, {1001: [A1]})
+    cog.session.answers = [{"ok": True, "requests": [request_sample()]}]
+
+    applied = []
+    original_apply = sync.apply_request
+
+    async def fake_apply(guild, request):
+        applied.append(request["id"])
+        return "done", "称号を外しました。"
+
+    sync.apply_request = fake_apply
+    try:
+        await cog.check_requests()
+    finally:
+        sync.apply_request = original_apply
+        sync.list_all_achievements = original
+
+    results = cog.session.posts_to("/api/internal/requests/7")
+    sent_achievements = cog.session.posts_to("/api/internal/achievements")
+
+    return (
+        applied == [7]
+        and len(results) == 1
+        and results[0]["payload"] == {"status": "done", "message": "称号を外しました。"}
+        and len(sent_achievements) == 1
+        and cog.session.gets[0]["url"] == sync.REQUESTS_URL
+    )
+
+
+async def check_requests_failed(original) -> bool:
+    """反映できなかったときは、理由を書き戻すが、実績は送り直さないか。"""
+    guild = sample_guild()
+    cog, _ = make_cog(guild, {1001: [A1]})
+    cog.session.answers = [{"ok": True, "requests": [request_sample()]}]
+
+    original_apply = sync.apply_request
+
+    async def fake_apply(guild, request):
+        return "failed", "実績を持っていません。"
+
+    sync.apply_request = fake_apply
+    try:
+        await cog.check_requests()
+    finally:
+        sync.apply_request = original_apply
+        sync.list_all_achievements = original
+
+    results = cog.session.posts_to("/api/internal/requests/7")
+
+    return (
+        len(results) == 1
+        and results[0]["payload"]["status"] == "failed"
+        and cog.session.posts_to("/api/internal/achievements") == []
+    )
+
+
+async def check_no_requests(original) -> bool:
+    """依頼が無いときは、何も送らないか。"""
+    cog, _ = make_cog(sample_guild(), {1001: [A1]})
+
+    await cog.check_requests()
+    sync.list_all_achievements = original
+
+    return cog.session.gets != [] and cog.session.posts == []
 
 
 async def check_without_settings() -> bool:
@@ -192,6 +294,9 @@ async def main() -> None:
         checks = (
             ("1 回の同期で 3 つ送り、実績だけは間隔をあける", await check_wiring(original)),
             ("実績の中身が、サイトが受け取れる形になっている", await check_achievement_payload(original)),
+            ("サイトの依頼を拾って、結果を書き戻し、実績を送り直す", await check_requests_applied(original)),
+            ("反映できなかったときは、実績を送り直さない", await check_requests_failed(original)),
+            ("依頼が無いときは、何も送らない", await check_no_requests(original)),
             ("同期の設定が無いときは、何もしない", await check_without_settings()),
         )
     finally:

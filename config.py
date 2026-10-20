@@ -77,3 +77,11 @@ try:
     ACHIEVEMENT_SYNC_MINUTES = max(1, int(os.getenv("ACHIEVEMENT_SYNC_MINUTES", "30")))
 except ValueError:
     ACHIEVEMENT_SYNC_MINUTES = 30
+
+# サイトからの依頼（実績の付与・剥奪、称号の着脱）を見に行く間隔（秒）。
+# 短いほど反映が速いが、そのぶんサイトへのアクセスが増える。サイト側は 1 回あたり
+# D1 を 1 回読むだけなので、30 秒でも無料枠には十分収まる（1 日 2,880 回）。
+try:
+    REQUEST_POLL_SECONDS = max(5, int(os.getenv("REQUEST_POLL_SECONDS", "30")))
+except ValueError:
+    REQUEST_POLL_SECONDS = 30

@@ -1,9 +1,9 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
+from achievements import grant, revoke
 from cogs.mypage import MyPageView
 from config import ACHIEVEMENT_ROLE_IDS
-from database import grant_achievement, revoke_achievement
 
 
 class AdminCog(commands.Cog):
@@ -136,7 +136,7 @@ class AdminCog(commands.Cog):
             )
             return
 
-        grant_achievement(member.id, target_role.id)
+        grant(member.id, target_role.id)
         await interaction.response.send_message(
             f"✅ {member.mention} に実績 **{target_role.name}** を付与しました！（マイページから装着可能です）"
         )
@@ -166,13 +166,14 @@ class AdminCog(commands.Cog):
             )
             return
 
-        revoke_achievement(member.id, target_role.id)
-
-        if target_role in member.roles:
-            try:
-                await member.remove_roles(target_role)
-            except Exception:
-                pass
+        try:
+            await revoke(member.id, target_role.id, member)
+        except discord.HTTPException:
+            await interaction.response.send_message(
+                f"⚠️ {member.mention} から実績 **{target_role.name}** を剥奪しましたが、"
+                "称号のロールを外せませんでした（Bot の権限を確認してください）。"
+            )
+            return
 
         await interaction.response.send_message(
             f"🗑️ {member.mention} から実績 **{target_role.name}** の獲得権限を剥奪しました。"

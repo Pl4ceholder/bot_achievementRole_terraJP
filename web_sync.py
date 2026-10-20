@@ -307,27 +307,45 @@ def achievement_master(role_ids, role_names: dict) -> list[dict]:
     ]
 
 
-def achievement_member(user_id, unlocked, title=None) -> dict:
+# 表示名の長さ（サイト側の MEMBER_NAME_MAX と同じ）
+MEMBER_NAME_MAX = 80
+
+
+def achievement_member(user_id, unlocked, title=None, name="") -> dict:
     """1 人分を、サイトへ送る形にする。
 
     unlocked は解放済みのロール ID の集まり。並べ方は決めておく（送る内容が毎回同じに
     なるので、変わっていないかを目で見て分かる）。
+
+    name は Discord の表示名。サイトの管理画面で相手を選ぶときに使う（ID だけでは
+    誰のことか分からない）。
     """
     return {
         "userId": str(user_id),
+        "name": str(name or "")[:MEMBER_NAME_MAX],
         "unlocked": sorted(str(role_id) for role_id in unlocked),
         "title": str(title) if title else "",
     }
 
 
-def achievement_members(unlocked_by_user: dict, title_by_user: dict) -> list[dict]:
+def achievement_members(
+    unlocked_by_user: dict, title_by_user: dict, name_by_user: dict | None = None
+) -> list[dict]:
     """人ごとの実績を、サイトへ送る形にする（ユーザー ID の順）。
 
     unlocked_by_user は ユーザー ID → 解放済みのロール ID。title_by_user は
     ユーザー ID → いまつけている称号（つけていなければ、入っていない）。
+    name_by_user は ユーザー ID → 表示名（分からなければ、名前は空になる）。
     """
+    names = name_by_user or {}
+
     return [
-        achievement_member(user_id, unlocked_by_user[user_id], title_by_user.get(user_id))
+        achievement_member(
+            user_id,
+            unlocked_by_user[user_id],
+            title_by_user.get(user_id),
+            names.get(user_id, ""),
+        )
         for user_id in sorted(unlocked_by_user)
     ]
 

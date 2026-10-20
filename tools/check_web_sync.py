@@ -42,7 +42,9 @@ from config import (  # noqa: E402
 )
 from web_sync import (  # noqa: E402
     DISCORD_EPOCH_MS,
+    MEMBER_NAME_MAX,
     achievement_master,
+    achievement_member,
     achievement_members,
     build_achievements_payload,
     build_events_payload,
@@ -398,7 +400,8 @@ def check_achievements() -> bool:
     """実績を、サイトへ送る形にできるか。
 
     名前が引けないロール（消されたもの）は送らない。並べ方は決めておく（同じ内容なら
-    送る形も同じになるので、変わったかどうかが分かる）。
+    送る形も同じになるので、変わったかどうかが分かる）。表示名はサイトの管理画面で
+    相手を選ぶのに使う（長すぎるときは切る）。
     """
     known = {10: "A", 20: "B", 30: "C"}
 
@@ -406,17 +409,25 @@ def check_achievements() -> bool:
     members = achievement_members(
         {200: [30, 10], 100: [10], 300: []},
         {200: 30, 100: None},
+        {200: "たろう", 100: "じろう"},
     )
+    long_name = achievement_member(100, [10], None, "あ" * 100)
 
-    return master == [
-        {"id": "10", "name": "A"},
-        {"id": "20", "name": "B"},
-        {"id": "30", "name": "C"},
-    ] and members == [
-        {"userId": "100", "unlocked": ["10"], "title": ""},
-        {"userId": "200", "unlocked": ["10", "30"], "title": "30"},
-        {"userId": "300", "unlocked": [], "title": ""},
-    ]
+    return (
+        master
+        == [
+            {"id": "10", "name": "A"},
+            {"id": "20", "name": "B"},
+            {"id": "30", "name": "C"},
+        ]
+        and members
+        == [
+            {"userId": "100", "name": "じろう", "unlocked": ["10"], "title": ""},
+            {"userId": "200", "name": "たろう", "unlocked": ["10", "30"], "title": "30"},
+            {"userId": "300", "name": "", "unlocked": [], "title": ""},
+        ]
+        and long_name["name"] == "あ" * MEMBER_NAME_MAX
+    )
 
 
 def check_achievements_due() -> bool:
