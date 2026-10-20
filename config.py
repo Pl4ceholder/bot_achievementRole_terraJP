@@ -15,6 +15,10 @@ CHANNEL_TMOD = 1543542274963804220
 CHANNEL_CONSOLE = 1543542426558398524
 CHANNEL_VANILLA = 1543542257351790682
 
+# 募集が立つチャンネル。サイトへの同期（cogs/sync.py）と、Discord 上の一覧
+# （cogs/recruitment.py）で同じものを使う（片方だけ直して食い違うのを防ぐ）
+RECRUIT_CHANNELS = {CHANNEL_TMOD, CHANNEL_CONSOLE, CHANNEL_VANILLA}
+
 ROLE_IDS = {
     "モッドマルチ": 1543544171069972500,  # ✋ | モッドマルチ希望 のロールID
     "バニラマルチ": 1543544231652491324,  # ✋ | バニラテラリアマルチ希望 のロールID
@@ -66,3 +70,18 @@ try:
     SYNC_INTERVAL_MINUTES = max(1, int(os.getenv("SYNC_INTERVAL_MINUTES", "5")))
 except ValueError:
     SYNC_INTERVAL_MINUTES = 5
+
+# 実績を送る間隔（分）。実績の付与は手動でたまにしか起きないので、募集やイベントより
+# 長くする。5 分ごとに送ると、サイト側（D1）の書き込みを無駄に使うため。
+try:
+    ACHIEVEMENT_SYNC_MINUTES = max(1, int(os.getenv("ACHIEVEMENT_SYNC_MINUTES", "30")))
+except ValueError:
+    ACHIEVEMENT_SYNC_MINUTES = 30
+
+# サイトからの依頼（実績の付与・剥奪、称号の着脱）を見に行く間隔（秒）。
+# 短いほど反映が速いが、そのぶんサイトへのアクセスが増える。サイト側は 1 回あたり
+# D1 を 1 回読むだけなので、30 秒でも無料枠には十分収まる（1 日 2,880 回）。
+try:
+    REQUEST_POLL_SECONDS = max(5, int(os.getenv("REQUEST_POLL_SECONDS", "30")))
+except ValueError:
+    REQUEST_POLL_SECONDS = 30
