@@ -85,3 +85,39 @@ try:
     REQUEST_POLL_SECONDS = max(5, int(os.getenv("REQUEST_POLL_SECONDS", "30")))
 except ValueError:
     REQUEST_POLL_SECONDS = 30
+
+
+# --- スターボード（リアクションを集めた投稿の保存） ---
+# 登録先のチャンネル。空のままならスターボードは動かない（既存の動作に影響しない）。
+try:
+    STARBOARD_CHANNEL_ID = int(os.getenv("STARBOARD_CHANNEL_ID", "") or 0) or None
+except ValueError:
+    STARBOARD_CHANNEL_ID = None
+
+# 数えるリアクション。カスタム絵文字は `<:name:id>` の形で書く。
+STARBOARD_EMOJI = os.getenv("STARBOARD_EMOJI", "⭐").strip() or "⭐"
+
+try:
+    STARBOARD_THRESHOLD = max(1, int(os.getenv("STARBOARD_THRESHOLD", "5")))
+except ValueError:
+    STARBOARD_THRESHOLD = 5
+
+# スターボードに載せないチャンネル（カンマ区切り）。案内や運営用のチャンネル向け。
+STARBOARD_IGNORE_CHANNEL_IDS = frozenset(
+    int(part)
+    for part in os.getenv("STARBOARD_IGNORE_CHANNEL_IDS", "").split(",")
+    if part.strip().isdigit()
+)
+
+# Bot の投稿をスターボードの対象にするか（既定は対象外）。
+STARBOARD_IGNORE_BOTS = os.getenv("STARBOARD_IGNORE_BOTS", "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
+
+# 投稿した本人のリアクションを数えるか（既定は数えない。自分の投稿を自分で持ち上げない）。
+STARBOARD_ALLOW_SELF_STAR = os.getenv(
+    "STARBOARD_ALLOW_SELF_STAR", "0"
+).strip().lower() in {"1", "true", "yes", "on"}

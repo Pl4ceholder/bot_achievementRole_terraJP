@@ -106,3 +106,72 @@ def delete_quiz(quiz_id: str) -> bool:
 def get_quiz_categories() -> list[str]:
     """登録済みクイズのカテゴリ一覧を取得する。"""
     return sorted({quiz["category"] for quiz in get_quizzes() if quiz["category"]})
+
+
+# --- スターボード ---------------------------------------------------------
+# スターボードに載せた投稿は、Bot を再起動しても消えないように Redis に覚えておく。
+# 元の投稿 ID からスターボードの投稿 ID を引けるようにして、リアクションが減ったときや
+# 元の投稿が消えたときに、同じ投稿を二重に載せず片付けられるようにする。
+
+STARBOARD_ENTRY_PREFIX = "starboard:entry:"
+STARBOARD_REVERSE_PREFIX = "starboard:reverse:"
+
+
+def get_starboard_entry(message_id: int) -> dict | None:
+    """元の投稿 ID に対応するスターボードの記録を返す。無ければ None。"""
+    value = r.get(f"{STARBOARD_ENTRY_PREFIX}{message_id}")
+    if not value:
+        return None
+
+    try:
+        entry = json.loads(value)
+    except (TypeError, ValueError):
+        r.delete(f"{STARBOARD_ENTRY_PREFIX}{message_id}")
+        return None
+
+    return entry if isinstance(entry, dict) else None
+
+
+def get_starboard_source(starboard_message_id: int) -> int | None:
+    """スターボードの投稿 ID から、元の投稿 ID を返す。無ければ None。"""
+    value = r.get(f"{STARBOARD_REVERSE_PREFIX}{starboard_message_id}")
+    try:
+        return int(value) if value else None
+    except (TypeError, ValueError):
+        return None
+
+
+def save_starboard_entry(
+    message_id: int,
+    starboard_message_id: int,
+    starboard_channel_id: int,
+    count: int,
+) -> None:
+    """スターボードに載せたことを記録する。"""
+    old = get_starboard_entry(message_id)
+    if old:
+        try:
+            old_id = int(old.get("starboard_message_id") or 0)
+        except (TypeError, ValueError):
+            old_id = 0
+        if old_id and old_id != int(starboard_message_id):
+            r.delete(f"{STARBOARD_REVERSE_PREFIX}{old_id}")
+
+    entry = {
+        "starboard_message_id": str(starboard_message_id),
+        "starboard_channel_id": str(starboard_channel_id),
+        "count": int(count),
+    }
+    r.set(f"{STARBOARD_ENTRY_PREFIX}{message_id}", json.dumps(entry))
+    r.set(f"{STARBOARD_REVERSE_PREFIX}{starboard_message_id}", str(message_id))
+
+
+def delete_starboard_entry(message_id: int) -> None:
+    """スターボードの記録を消す（元の投稿が消えた・リアクションが減ったとき）。"""
+    entry = get_starboard_entry(message_id)
+    r.delete(f"{STARBOARD_ENTRY_PREFIX}{message_id}")
+
+    if entry:
+        starboard_message_id = entry.get("starboard_message_id")
+        if starboard_message_id:
+            r.delete(f"{STARBOARD_REVERSE_PREFIX}{starboard_message_id}")
